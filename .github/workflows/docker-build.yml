@@ -84,7 +84,6 @@ jobs:
           elif [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
             echo "version=${{ steps.bump_version.outputs.new_version }}" >> $GITHUB_OUTPUT
           else
-            # For automatic pushes, use current version with commit SHA
             echo "version=${{ steps.read_version.outputs.current_version }}-dev-${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
           fi
 
@@ -145,24 +144,17 @@ jobs:
             COMMITS=$(git log ${PREV_TAG}..HEAD --pretty=format:"- %s (%h)" --no-merges)
           fi
 
-          # Create changelog entry
-          cat > /tmp/changelog_entry.txt << 'ENTRY_EOF'
-          ## [$VERSION] - $(date +%Y-%m-%d)
+          CURRENT_DATE=$(date +%Y-%m-%d)
+
+          cat > /tmp/changelog_entry.txt << EOF
+          ## [${VERSION}] - ${CURRENT_DATE}
 
           ### Changes
-          $COMMITS
+          ${COMMITS}
 
-          ENTRY_EOF
+          EOF
 
-          # Replace variables in the temp file
-          sed -i "s/\$VERSION/${VERSION}/g" /tmp/changelog_entry.txt
-          sed -i "s|\$COMMITS|${COMMITS}|g" /tmp/changelog_entry.txt
-
-          CHANGELOG_ENTRY=$(cat /tmp/changelog_entry.txt)
-
-          # Update or create CHANGELOG.md
           if [ -f "CHANGELOG.md" ]; then
-            # Create temp file with new entry
             {
               head -n 1 CHANGELOG.md
               echo ""
@@ -171,20 +163,18 @@ jobs:
             } > CHANGELOG.md.tmp
             mv CHANGELOG.md.tmp CHANGELOG.md
           else
-            # Create new CHANGELOG.md
-            {
-              echo "# Changelog"
-              echo ""
-              echo "All notable changes to this project will be documented in this file."
-              echo ""
-              echo "The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),"
-              echo "and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)."
-              echo ""
-              cat /tmp/changelog_entry.txt
-            } > CHANGELOG.md
+            cat > CHANGELOG.md << 'CHANGELOG_EOF'
+          # Changelog
+
+          All notable changes to this project will be documented in this file.
+
+          The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+          and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+          CHANGELOG_EOF
+            cat /tmp/changelog_entry.txt >> CHANGELOG.md
           fi
 
-          # Save changelog for release notes (escape for GitHub Actions output)
           {
             echo "changelog<<EOF_CHANGELOG"
             echo "$COMMITS"
