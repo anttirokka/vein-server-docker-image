@@ -84,6 +84,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpulse0 \
     libpulse-mainloop-glib0 \
     python3-minimal \
+    socat \
+    procps \
     && rm -rf /var/lib/apt/lists/*
 
 # Create directory for the server and config, set permissions
@@ -93,7 +95,8 @@ RUN mkdir -p ${SERVER_PATH} ${CONFIG_PATH} ${LOG_DIR} && \
 
 # Copy entrypoint script and make it executable (as root)
 COPY --chown=steam:steam entrypoint.py /entrypoint.py
-RUN chmod +x /entrypoint.py
+COPY --chown=root:root http-forwarder.sh /http-forwarder.sh
+RUN chmod +x /entrypoint.py && chmod +x /http-forwarder.sh
 
 WORKDIR ${SERVER_PATH}
 
@@ -104,4 +107,4 @@ WORKDIR ${SERVER_PATH}
 # Set the entrypoint
 #ENTRYPOINT ["/entrypoint.sh"]
 # Replace entrypoint with a small runtime wrapper that fixes ownership on mounted volumes
-ENTRYPOINT ["bash", "-lc", "chown -R steam:steam ${SERVER_PATH} ${SERVER_PATH}/Vein/Saved ${SERVER_PATH}/Vein/Saved/Config 2>/dev/null || true; exec python3 /entrypoint.py"]
+ENTRYPOINT ["bash", "-lc", "chown -R steam:steam ${SERVER_PATH} ${SERVER_PATH}/Vein/Saved ${SERVER_PATH}/Vein/Saved/Config 2>/dev/null || true; /http-forwarder.sh & exec python3 /entrypoint.py"]

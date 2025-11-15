@@ -68,6 +68,7 @@ def update_game_ini(config_path):
     update_ini_value(config, '/Script/Vein.VeinGameSession', 'HeartbeatInterval',
                      os.getenv('HEARTBEAT_INTERVAL', '5.0'))
 
+    # HTTP Port - add HTTPPort
     http_port = os.getenv('HTTP_PORT')
     if http_port:
         update_ini_value(config, '/Script/Vein.VeinGameSession', 'HTTPPort', http_port)
