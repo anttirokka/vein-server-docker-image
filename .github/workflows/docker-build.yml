@@ -108,7 +108,7 @@ jobs:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
             type=raw,value=${{ steps.set_version.outputs.version }}
-            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=latest,enable=${{ github.event_name == 'workflow_dispatch' }}
             type=sha,prefix={{branch}}-
 
       - name: Build and push Docker image
