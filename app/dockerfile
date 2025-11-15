@@ -1,0 +1,107 @@
+# Base image with SteamCMD
+FROM cm2network/steamcmd:root
+
+#
+# Origianl Source: https://github.com/JMeta0/vein-docker-server
+#
+
+# Build arguments for versioning
+ARG VERSION=dev
+ARG BUILD_DATE
+ARG VCS_REF
+
+# Metadata
+LABEL maintainer="nieminen@gmail.com"
+LABEL description="Vein Dedicated Server Docker Image"
+LABEL version="${VERSION}"
+LABEL org.opencontainers.image.created="${BUILD_DATE}"
+LABEL org.opencontainers.image.url="https://github.com/anttirokka/vein-server-docker-image"
+LABEL org.opencontainers.image.source="https://github.com/anttirokka/vein-server-docker-image"
+LABEL org.opencontainers.image.version="${VERSION}"
+LABEL org.opencontainers.image.revision="${VCS_REF}"
+LABEL org.opencontainers.image.title="Vein Dedicated Server"
+LABEL org.opencontainers.image.description="A Docker container for running a Vein dedicated server"
+
+
+# Environment variables for server installation and paths
+ENV STEAM_USER anonymous
+ENV STEAM_PASS ""
+ENV STEAM_AUTH ""
+ENV APPID 2131400
+ENV SERVER_PATH /home/steam/vein-server
+ENV CONFIG_DIR_NAME LinuxServer
+ENV CONFIG_PATH ${SERVER_PATH}/Vein/Saved/Config/${CONFIG_DIR_NAME}
+ENV LOG_DIR ${SERVER_PATH}/Vein/Saved/Logs
+
+# --- Default Server Settings (can be overridden at runtime via -e) ---
+
+# Game.ini - [/Script/Engine.GameSession]
+ENV MAX_PLAYERS 16
+
+# Game.ini - [/Script/Vein.VeinGameSession]
+ENV SERVER_PUBLIC True
+ENV SERVER_NAME "Vein Docker Server"
+ENV SERVER_BIND_ADDR "0.0.0.0"
+ENV SUPER_ADMIN_STEAM_IDS ""
+ENV ADMIN_STEAM_IDS ""
+ENV HEARTBEAT_INTERVAL 5.0
+ENV SERVER_PASSWORD ""
+ENV HTTP_PORT ""
+
+# Game.ini - [OnlineSubsystemSteam]
+ENV GAME_SERVER_QUERY_PORT 27015 # UDP Query Port for Steam
+ENV VAC_ENABLED 0 # 0 for False, 1 for True
+
+# Game.ini - [URL] & Command Line
+ENV GAME_PORT 7777 # UDP Game Port
+
+# Game.ini - [/Script/Vein.ServerSettings]
+ENV SHOW_SCOREBOARD_BADGES 1 # 0 for False, 1 for True
+ENV DISCORD_WEBHOOK_URL ""
+ENV DISCORD_ADMIN_WEBHOOK_URL ""
+
+# Engine.ini - [ConsoleVariables]
+# Prefix with CVAR_ followed by the exact console variable name from Vein docs
+# Example: To set 'vein.PvP=True', use ENV CVAR_vein.PvP=True
+# ENV CVAR_vein.PvP=True
+# ENV CVAR_vein.TimeMultiplier=16
+
+# --- End Default Server Settings ---
+
+# Ports to expose (UDP)
+# These are defaults; actual ports used depend on GAME_PORT and GAME_SERVER_QUERY_PORT ENV vars
+EXPOSE 7777/udp
+EXPOSE 27015/udp
+# HTTP port for query API (TCP) - only exposed if HTTP_PORT is set
+EXPOSE 8080/tcp
+
+# Install gosu for safe privilege dropping at runtime
+# (replaced complex download+verify with simple apt install)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gosu \
+    libatomic1 \
+    libasound2 \
+    libpulse0 \
+    libpulse-mainloop-glib0 \
+    python3-minimal \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create directory for the server and config, set permissions
+RUN mkdir -p ${SERVER_PATH} ${CONFIG_PATH} ${LOG_DIR} && \
+    chown -R steam:steam ${SERVER_PATH} && \
+    chmod -R 755 ${SERVER_PATH}
+
+# Copy entrypoint script and make it executable (as root)
+COPY --chown=steam:steam entrypoint.py /entrypoint.py
+RUN chmod +x /entrypoint.py
+
+WORKDIR ${SERVER_PATH}
+
+# Default command passed to entrypoint.sh (can be overridden)
+CMD []
+WORKDIR ${SERVER_PATH}
+
+# Set the entrypoint
+#ENTRYPOINT ["/entrypoint.sh"]
+# Replace entrypoint with a small runtime wrapper that fixes ownership on mounted volumes
+ENTRYPOINT ["bash", "-lc", "chown -R steam:steam ${SERVER_PATH} ${SERVER_PATH}/Vein/Saved ${SERVER_PATH}/Vein/Saved/Config 2>/dev/null || true; exec python3 /entrypoint.py"]

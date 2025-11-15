@@ -1,0 +1,229 @@
+name: Build and Push Docker Image
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'app/**'
+      - 'app/dockerfile'
+      - '.github/workflows/docker-build.yml'
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      version_bump:
+        description: 'Version bump type (major, minor, patch)'
+        required: false
+        default: 'patch'
+        type: choice
+        options:
+          - major
+          - minor
+          - patch
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Read current version
+        id: read_version
+        run: |
+          VERSION=$(cat VERSION | tr -d '[:space:]')
+          echo "current_version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Current version: $VERSION"
+
+      - name: Bump version
+        id: bump_version
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          CURRENT_VERSION="${{ steps.read_version.outputs.current_version }}"
+          BUMP_TYPE="${{ github.event.inputs.version_bump || 'patch' }}"
+
+          IFS='.' read -r major minor patch <<< "$CURRENT_VERSION"
+
+          case $BUMP_TYPE in
+            major)
+              major=$((major + 1))
+              minor=0
+              patch=0
+              ;;
+            minor)
+              minor=$((minor + 1))
+              patch=0
+              ;;
+            patch)
+              patch=$((patch + 1))
+              ;;
+          esac
+
+          NEW_VERSION="${major}.${minor}.${patch}"
+          echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
+          echo "New version: $NEW_VERSION"
+          echo "$NEW_VERSION" > VERSION
+
+      - name: Set version for builds
+        id: set_version
+        run: |
+          if [ "${{ github.event_name }}" == "pull_request" ]; then
+            echo "version=${{ steps.read_version.outputs.current_version }}-pr${{ github.event.pull_request.number }}" >> $GITHUB_OUTPUT
+          elif [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "version=${{ steps.bump_version.outputs.new_version }}" >> $GITHUB_OUTPUT
+          else
+            # For automatic pushes, use current version with commit SHA
+            echo "version=${{ steps.read_version.outputs.current_version }}-dev-${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=${{ steps.set_version.outputs.version }}
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,prefix={{branch}}-
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./app
+          file: ./app/dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ steps.set_version.outputs.version }}
+            BUILD_DATE=${{ fromJSON(steps.meta.outputs.json).labels['org.opencontainers.image.created'] }}
+            VCS_REF=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Generate Changelog
+        if: github.event_name == 'workflow_dispatch'
+        id: changelog
+        run: |
+          VERSION="${{ steps.bump_version.outputs.new_version }}"
+          PREV_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+
+          echo "Generating changelog for v${VERSION}..."
+
+          if [ -z "$PREV_TAG" ]; then
+            echo "No previous tag found, creating initial changelog"
+            COMMITS=$(git log --pretty=format:"- %s (%h)" --no-merges)
+          else
+            echo "Previous tag: $PREV_TAG"
+            COMMITS=$(git log ${PREV_TAG}..HEAD --pretty=format:"- %s (%h)" --no-merges)
+          fi
+
+          # Create changelog entry
+          cat > /tmp/changelog_entry.txt << 'ENTRY_EOF'
+          ## [$VERSION] - $(date +%Y-%m-%d)
+
+          ### Changes
+          $COMMITS
+
+          ENTRY_EOF
+
+          # Replace variables in the temp file
+          sed -i "s/\$VERSION/${VERSION}/g" /tmp/changelog_entry.txt
+          sed -i "s|\$COMMITS|${COMMITS}|g" /tmp/changelog_entry.txt
+
+          CHANGELOG_ENTRY=$(cat /tmp/changelog_entry.txt)
+
+          # Update or create CHANGELOG.md
+          if [ -f "CHANGELOG.md" ]; then
+            # Create temp file with new entry
+            {
+              head -n 1 CHANGELOG.md
+              echo ""
+              cat /tmp/changelog_entry.txt
+              tail -n +2 CHANGELOG.md
+            } > CHANGELOG.md.tmp
+            mv CHANGELOG.md.tmp CHANGELOG.md
+          else
+            # Create new CHANGELOG.md
+            {
+              echo "# Changelog"
+              echo ""
+              echo "All notable changes to this project will be documented in this file."
+              echo ""
+              echo "The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),"
+              echo "and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)."
+              echo ""
+              cat /tmp/changelog_entry.txt
+            } > CHANGELOG.md
+          fi
+
+          # Save changelog for release notes (escape for GitHub Actions output)
+          {
+            echo "changelog<<EOF_CHANGELOG"
+            echo "$COMMITS"
+            echo "EOF_CHANGELOG"
+          } >> $GITHUB_OUTPUT
+
+      - name: Commit version bump
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add VERSION CHANGELOG.md
+          git commit -m "chore: bump version to ${{ steps.bump_version.outputs.new_version }} [skip ci]" || echo "No changes to commit"
+
+      - name: Create and push tag
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          VERSION="${{ steps.bump_version.outputs.new_version }}"
+          git tag -a "v$VERSION" -m "Release version $VERSION"
+          git push origin "v$VERSION"
+          git push origin HEAD:${{ github.ref_name }}
+
+      - name: Create GitHub Release
+        if: github.event_name == 'workflow_dispatch'
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v${{ steps.bump_version.outputs.new_version }}
+          name: Release v${{ steps.bump_version.outputs.new_version }}
+          body: |
+            ## Docker Image
+            ```bash
+            docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.bump_version.outputs.new_version }}
+            ```
+
+            ## Changes
+            ${{ steps.changelog.outputs.changelog }}
+
+            ## Full Changelog
+            See [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md)
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
