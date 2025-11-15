@@ -72,8 +72,8 @@ ENV DISCORD_ADMIN_WEBHOOK_URL ""
 # These are defaults; actual ports used depend on GAME_PORT and GAME_SERVER_QUERY_PORT ENV vars
 EXPOSE 7777/udp
 EXPOSE 27015/udp
-# HTTP port for query API (TCP) - only exposed if HTTP_PORT is set
-EXPOSE 8080/tcp
+# HTTP port for query API (TCP) - forwarded from 9080 to localhost:8080
+EXPOSE 9080/tcp
 
 # Install gosu for safe privilege dropping at runtime
 # (replaced complex download+verify with simple apt install)
