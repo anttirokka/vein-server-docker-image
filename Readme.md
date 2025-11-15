@@ -250,18 +250,6 @@ Server logs are stored in:
 - Check that the port is not blocked by firewall
 - The HTTP API requires the game to be fully started
 
-## Contributing
-
-Contributions are welcome! Please feel free to submit issues or pull requests.
-
-### Development Workflow
-
-1. Create a feature branch
-2. Make your changes
-3. Test locally using `./scripts/build-local.sh`
-4. Submit a pull request
-5. After merge, the image is automatically built and versioned
-
 ## License
 
 This project is provided as-is
