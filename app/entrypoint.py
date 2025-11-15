@@ -29,19 +29,51 @@ def update_ini_array(config, section, key, csv_values):
     if not config.has_section(section):
         config.add_section(section)
 
-    # Add new entries directly (configparser will handle duplicates)
+    # Remove all existing entries for this key (including +Key variants)
+    options_to_remove = [opt for opt in config.options(section)
+                         if opt == key or opt.startswith(f'+{key}')]
+    for opt in options_to_remove:
+        config.remove_option(section, opt)
+
+    # Add new entries
     values = [v.strip() for v in csv_values.split(',')]
-    config.set(section, key, values[0])
-    for val in values[1:]:
-        # Multiple values with same key get overwritten, so we use a workaround
-        # Store them as separate options with + prefix
-        existing_count = sum(1 for opt in config.options(section) if opt.startswith(f'+{key}'))
-        config.set(section, f'+{key}#{existing_count}', val)
+    if values:
+        # First value without +
+        config.set(section, key, values[0])
+        # Subsequent values with +
+        for i, val in enumerate(values[1:], 1):
+            config.set(section, f'+{key}', val)
 
 def write_ini_file(config, filepath):
-    """Write INI file with proper formatting."""
+    """Write INI file with proper formatting, handling duplicate keys."""
     with open(filepath, 'w') as f:
-        config.write(f, space_around_delimiters=False)
+        for section in config.sections():
+            f.write(f'[{section}]\n')
+
+            # Group options by base key name
+            written_keys = set()
+            for option in config.options(section):
+                # Extract base key (remove + prefix if present)
+                base_key = option.lstrip('+').split('#')[0]
+
+                if base_key in written_keys:
+                    continue
+
+                # Get all values for this base key
+                matching_options = [opt for opt in config.options(section)
+                                   if opt == base_key or opt.startswith(f'+{base_key}')]
+
+                for opt in matching_options:
+                    value = config.get(section, opt)
+                    # Write with + prefix for array entries except the first one
+                    if opt.startswith('+'):
+                        f.write(f'+{base_key}={value}\n')
+                    else:
+                        f.write(f'{opt}={value}\n')
+
+                written_keys.add(base_key)
+
+            f.write('\n')
 
 def update_game_ini(config_path):
     """Update Game.ini with environment variables."""
