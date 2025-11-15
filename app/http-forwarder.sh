@@ -12,12 +12,13 @@ if [ -n "${HTTP_PORT}" ]; then
 
     # Wait for the game server to start the HTTP listener
     echo "Waiting for game server to start..."
-    sleep 15
+    sleep 30
 
     # Check if the game server's HTTP listener is up using /proc/net/tcp
     # This is more lightweight than netstat and doesn't require additional packages
-    MAX_RETRIES=60
+    MAX_RETRIES=120  # Increased from 60 to 120 (10 minutes total)
     RETRY_COUNT=0
+    CHECK_INTERVAL=5  # Configurable check interval in seconds
 
     # Convert port to hex for /proc/net/tcp format
     PORT_HEX=$(printf '%04X' "${HTTP_PORT}")
@@ -30,13 +31,13 @@ if [ -n "${HTTP_PORT}" ]; then
             break
         fi
 
-        echo "Waiting for game server HTTP listener (attempt $((RETRY_COUNT + 1))/$MAX_RETRIES)..."
-        sleep 5
         RETRY_COUNT=$((RETRY_COUNT + 1))
+        echo "Waiting for game server HTTP listener (attempt ${RETRY_COUNT}/${MAX_RETRIES})..."
+        sleep ${CHECK_INTERVAL}
     done
 
     if [ $RETRY_COUNT -eq $MAX_RETRIES ]; then
-        echo "Warning: Game server HTTP listener not detected after ${MAX_RETRIES} attempts"
+        echo "Warning: Game server HTTP listener not detected after ${MAX_RETRIES} attempts ($(($MAX_RETRIES * $CHECK_INTERVAL / 60)) minutes)"
         echo "Starting forwarder anyway..."
     fi
 
