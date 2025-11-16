@@ -83,7 +83,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libasound2 \
     libpulse0 \
     libpulse-mainloop-glib0 \
-    python3-minimal \
+    python3 \
     procps \
     && rm -rf /var/lib/apt/lists/*
 
