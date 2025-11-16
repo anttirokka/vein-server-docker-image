@@ -29,7 +29,6 @@ class CORSForwardHandler(http.server.BaseHTTPRequestHandler):
         self.send_header('Access-Control-Allow-Origin', self.allow_origin)
         self.send_header('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS')
         self.send_header('Access-Control-Allow-Headers', 'Content-Type, Authorization')
-        self.send_header('Access-Control-Allow-Credentials', 'false')
 
     def do_OPTIONS(self):
         self.send_response(204)
