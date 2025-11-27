@@ -3,7 +3,9 @@ import os
 import sys
 import subprocess
 import configparser
+import requests
 from pathlib import Path
+from datetime import datetime
 
 def run_as_steam_user():
     """Re-execute script as steam user if running as root."""
@@ -14,6 +16,51 @@ def run_as_steam_user():
 def ensure_directory(path):
     """Create directory if it doesn't exist."""
     Path(path).mkdir(parents=True, exist_ok=True)
+
+def send_discord_notification(message, title="Vein Server Notification", color=3066993):
+    """Send a notification to Discord webhook.
+    
+    Args:
+        message: The message content
+        title: The embed title
+        color: Discord embed color (default: green 3066993)
+    
+    Returns:
+        bool: True if notification was sent successfully
+    """
+    webhook_url = os.getenv('DISCORD_WEBHOOK_URL', '')
+    
+    if not webhook_url:
+        return False
+    
+    try:
+        embed = {
+            "title": title,
+            "description": message,
+            "color": color,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        
+        payload = {
+            "embeds": [embed]
+        }
+        
+        response = requests.post(
+            webhook_url,
+            json=payload,
+            timeout=5
+        )
+        
+        if response.status_code in (200, 204):
+            print("Discord notification sent successfully")
+            return True
+        else:
+            print(f"Discord notification failed: {response.status_code}")
+            return False
+            
+    except Exception as e:
+        print(f"Failed to send Discord notification: {e}")
+        return False
 
 def update_ini_value(config, section, key, value):
     """Update or add a value in the config."""
@@ -257,6 +304,22 @@ def start_server(server_path, extra_args):
     server_args.extend(extra_args)
 
     print(f"Starting Vein Server with arguments: {' '.join(server_args)}")
+
+    # Send Discord notification about server starting
+    server_name = os.getenv('SERVER_NAME', 'Vein Server')
+    max_players = os.getenv('MAX_PLAYERS', '16')
+    game_port = os.getenv('GAME_PORT', '7777')
+    query_port = os.getenv('GAME_SERVER_QUERY_PORT', '27015')
+    
+    send_discord_notification(
+        f"🚀 **{server_name}** is starting up!\n\n"
+        f"**Max Players:** {max_players}\n"
+        f"**Game Port:** {game_port}\n"
+        f"**Query Port:** {query_port}\n"
+        f"**Timestamp:** {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC",
+        title="Server Starting",
+        color=3066993  # Green
+    )
 
     os.chdir(server_path)
 

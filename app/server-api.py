@@ -96,7 +96,7 @@ def get_server_process():
 
 def send_discord_notification(message, title="Vein Server Notification", color=3447003, use_admin=False):
     """Send a notification to Discord webhook.
-    
+
     Args:
         message: The message content
         title: Embed title
@@ -104,10 +104,10 @@ def send_discord_notification(message, title="Vein Server Notification", color=3
         use_admin: If True, use admin webhook; otherwise use regular webhook
     """
     webhook_url = DISCORD_ADMIN_WEBHOOK_URL if use_admin else DISCORD_WEBHOOK_URL
-    
+
     if not webhook_url:
         return False
-    
+
     try:
         embed = {
             "title": title,
@@ -118,11 +118,11 @@ def send_discord_notification(message, title="Vein Server Notification", color=3
                 "text": "Server API"
             }
         }
-        
+
         payload = {
             "embeds": [embed]
         }
-        
+
         response = requests.post(webhook_url, json=payload, timeout=5)
         return response.status_code in [200, 204]
     except Exception as e:
@@ -381,7 +381,7 @@ def restart_server():
     try:
         pid = proc.pid
         cmdline = proc.cmdline()
-        
+
         # Extract any custom server arguments from the original command line
         # The cmdline typically looks like: ['./VeinServer.sh', '-log', '-QueryPort=27015', '-Port=7777', ...]
         server_args = []
@@ -391,24 +391,49 @@ def restart_server():
                 if 'VeinServer' in arg and i + 1 < len(cmdline):
                     server_args = cmdline[i + 1:]
                     break
-        
+
         print(f"Sending SIGTERM to server process (PID: {pid})")
         print(f"Original server args: {server_args}")
 
-        # Send SIGTERM for graceful shutdown
+        # Terminate all child processes first
+        try:
+            children = proc.children(recursive=True)
+            print(f"Found {len(children)} child processes")
+            for child in children:
+                try:
+                    print(f"Terminating child process PID: {child.pid}")
+                    child.terminate()
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    pass
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            pass
+
+        # Send SIGTERM to main process for graceful shutdown
         proc.terminate()
 
-        # Wait for process to exit (max 30 seconds)
+        # Wait for process to exit (max 45 seconds)
         print("Waiting for server to shut down...")
         try:
-            proc.wait(timeout=30)
+            proc.wait(timeout=45)
             print("Server shut down gracefully")
         except psutil.TimeoutExpired:
-            # Force kill if graceful shutdown failed
-            print("Server didn't shut down gracefully, forcing...")
+            # Force kill children first if graceful shutdown failed
+            print("Server didn't shut down gracefully, force killing children...")
+            try:
+                children = proc.children(recursive=True)
+                for child in children:
+                    try:
+                        child.kill()
+                    except (psutil.NoSuchProcess, psutil.AccessDenied):
+                        pass
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                pass
+
+            # Force kill main process
+            print("Force killing main process...")
             proc.kill()
             try:
-                proc.wait(timeout=5)
+                proc.wait(timeout=10)
             except psutil.TimeoutExpired:
                 return jsonify({
                     'error': 'Server process could not be terminated',
@@ -437,7 +462,7 @@ def restart_server():
             stderr=subprocess.DEVNULL,
             start_new_session=True
         )
-        
+
         # Send Discord notification
         server_name = os.getenv('SERVER_NAME', 'Vein Server')
         discord_sent = send_discord_notification(
@@ -498,22 +523,22 @@ def get_server_status():
 @require_api_key
 def update_server():
     """Update the Vein server by restarting it.
-    
+
     The entrypoint.py automatically runs SteamCMD app_update on every start,
     so restarting the server will check for and install any available updates.
-    
+
     This can be done with server running - it will be stopped, updated, and restarted.
     """
     proc = get_server_process()
-    
+
     try:
         print(f"Initiating server update for AppID {APPID}...")
-        
+
         # If server is running, stop it first
         if proc:
             pid = proc.pid
             print(f"Stopping server (PID: {pid}) for update...")
-            
+
             proc.terminate()
             try:
                 proc.wait(timeout=30)
@@ -528,17 +553,17 @@ def update_server():
                         'error': 'Could not stop server for update',
                         'note': 'Server process could not be terminated'
                     }), 500
-            
+
             time.sleep(2)
         else:
             print("Server is not running, will start fresh after update")
-        
+
         # Start the server via entrypoint, which will run SteamCMD update
         print("Starting entrypoint (will update and start server)...")
         server_path = os.getenv('SERVER_PATH', '/home/steam/vein-server')
-        
+
         restart_cmd = ['/usr/bin/python3', '/entrypoint.py']
-        
+
         subprocess.Popen(
             restart_cmd,
             cwd=server_path,
@@ -546,21 +571,21 @@ def update_server():
             stderr=subprocess.DEVNULL,
             start_new_session=True
         )
-        
+
         # Send Discord notification
         server_name = os.getenv('SERVER_NAME', 'Vein Server')
         notification_msg = f"⬆️ **{server_name}** is being updated via API.\n\n"
         notification_msg += f"**App ID:** {APPID}\n"
         notification_msg += f"**Timestamp:** {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC\n\n"
         notification_msg += "The server is restarting and will check for updates automatically."
-        
+
         discord_sent = send_discord_notification(
             notification_msg,
             title="Server Update Initiated",
             color=3447003,  # Blue
             use_admin=True
         )
-        
+
         return jsonify({
             'success': True,
             'message': 'Server update initiated',
@@ -579,7 +604,7 @@ def update_server():
 @app.route('/api/server/update-info', methods=['GET'])
 def get_update_info():
     """Get information about server installation and potential updates.
-    
+
     Note: SteamCMD cannot detect available updates without downloading them.
     This endpoint provides installation metadata instead.
     """
@@ -588,11 +613,11 @@ def get_update_info():
         manifest_pattern = f'appmanifest_{APPID}.acf'
         steamapps_dir = os.path.join(SERVER_PATH, '..', 'steamapps')
         manifest_path = os.path.join(steamapps_dir, manifest_pattern)
-        
+
         install_info = {
             'appid': APPID,
             'server_path': SERVER_PATH,
-            'installed': os.path.exists(os.path.join(SERVER_PATH, 'VeinServer.sh')) or 
+            'installed': os.path.exists(os.path.join(SERVER_PATH, 'VeinServer.sh')) or
                         os.path.exists(os.path.join(SERVER_PATH, 'VeinServer')),
         }
 
