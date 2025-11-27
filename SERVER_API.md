@@ -5,6 +5,7 @@ This API provides endpoints for monitoring server performance and managing confi
 ## Features
 
 - **Server Status & Control**: Check server status and restart the server remotely
+- **Server Updates**: Get installation info and update server via SteamCMD
 - **Server Metrics**: Real-time CPU, memory, and disk usage
 - **Configuration Management**: Read and update Game.ini and Engine.ini
 - **Log Access**: View server logs without SSH access (protected by API key)
@@ -277,7 +278,9 @@ curl -X POST http://localhost:8856/api/server/restart \
   "success": true,
   "message": "Server restart initiated",
   "previous_pid": 1234,
-  "note": "Server is restarting. It may take a few moments to come back online."
+  "server_args_detected": ["-log", "-QueryPort=27015", "-Port=7777"],
+  "note": "Server is restarting with flags from environment variables. Custom CMD flags from container start are not preserved.",
+  "recommendation": "Set all server flags via environment variables (GAME_PORT, SERVER_MULTIHOME_IP, etc.) for reliable restarts"
 }
 ```
 
@@ -286,7 +289,103 @@ curl -X POST http://localhost:8856/api/server/restart \
 - Recover from a hung or unresponsive server
 - Scheduled maintenance restarts
 
-**Note**: The restart is handled by sending signals to the server process. If the server doesn't restart automatically, the container's process manager will handle it.
+**Important Limitations:**
+- The restart uses the entrypoint script which generates server flags from **environment variables only**
+- Any custom flags passed via Docker `CMD` at container start will **not be preserved**
+- To ensure consistent restarts, always configure the server using environment variables:
+  - `GAME_PORT` - Game port (default: 7777)
+  - `GAME_SERVER_QUERY_PORT` - Query port (default: 27015)
+  - `SERVER_MULTIHOME_IP` - Bind to specific IP
+  - Other settings in Game.ini/Engine.ini via their respective env vars
+
+**Note**: The restart is handled by spawning a new server process via the entrypoint script.
+
+---
+
+### Server Update Information
+
+```bash
+GET /api/server/update-info
+```
+
+Get information about the current server installation, including build ID and last update time.
+
+**Note**: SteamCMD cannot detect available updates without downloading them. This is a known limitation of the Steam API.
+
+**Example:**
+```bash
+curl http://localhost:8856/api/server/update-info
+```
+
+**Response:**
+```json
+{
+  "install_info": {
+    "appid": "2131400",
+    "server_path": "/home/steam/vein-server",
+    "installed": true,
+    "build_id": "12345678",
+    "last_updated": "2025-11-27T10:30:00"
+  },
+  "note": "SteamCMD cannot check for updates without downloading. Use POST /api/server/update to update.",
+  "limitations": "Steam API does not provide a reliable way to check for available updates before downloading"
+}
+```
+
+---
+
+### Update Server
+
+```bash
+POST /api/server/update
+```
+
+Update the Vein server using SteamCMD. **Requires API key.**
+
+**Important**: The server must be stopped before updating. This endpoint will run `app_update` which downloads any available updates.
+
+**Headers:**
+```
+X-API-Key: your-secret-key-here
+```
+
+**Example:**
+```bash
+curl -X POST http://localhost:8856/api/server/update \
+  -H "X-API-Key: your-secret-key-here"
+```
+
+**Response (Success):**
+```json
+{
+  "success": true,
+  "message": "Server update completed",
+  "appid": "2131400",
+  "update_detected": true,
+  "note": "Start the server to apply changes",
+  "output_snippet": "...SteamCMD output..."
+}
+```
+
+**Response (Server Running):**
+```json
+{
+  "error": "Server is currently running",
+  "message": "Please stop the server before updating",
+  "suggestion": "Use POST /api/server/restart to restart after stopping, or stop manually first"
+}
+```
+
+**Limitations**:
+- SteamCMD cannot detect if updates are available without downloading
+- The endpoint will always attempt to update, even if already up-to-date
+- Updates can take several minutes depending on size and connection speed
+- Server must be stopped first to prevent file corruption
+
+**Workflow**:
+1. Stop the server (or check it's not running)
+2. Call this endpoint to update
+3. Start the server again (or use `/api/server/restart`)
 
 ---
 

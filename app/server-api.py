@@ -22,6 +22,8 @@ CORS(app)  # Enable CORS for all routes
 CONFIG_PATH = os.getenv('CONFIG_PATH', '/home/steam/vein-server/Vein/Saved/Config/LinuxServer')
 SERVER_PATH = os.getenv('SERVER_PATH', '/home/steam/vein-server')
 LOG_DIR = os.path.join(SERVER_PATH, 'Vein/Saved/Logs')
+APPID = os.getenv('APPID', '2131400')
+STEAMCMD_PATH = '/home/steam/steamcmd/steamcmd.sh'
 
 # API Key for protected operations (optional security)
 API_KEY = os.getenv('SERVER_API_KEY', '')
@@ -339,9 +341,21 @@ def restart_server():
     try:
         pid = proc.pid
         cmdline = proc.cmdline()
+        
+        # Extract any custom server arguments from the original command line
+        # The cmdline typically looks like: ['./VeinServer.sh', '-log', '-QueryPort=27015', '-Port=7777', ...]
+        server_args = []
+        if cmdline:
+            # Find VeinServer in the command line and extract args after it
+            for i, arg in enumerate(cmdline):
+                if 'VeinServer' in arg and i + 1 < len(cmdline):
+                    server_args = cmdline[i + 1:]
+                    break
+        
+        print(f"Sending SIGTERM to server process (PID: {pid})")
+        print(f"Original server args: {server_args}")
 
         # Send SIGTERM for graceful shutdown
-        print(f"Sending SIGTERM to server process (PID: {pid})")
         proc.terminate()
 
         # Wait for process to exit (max 30 seconds)
@@ -365,11 +379,14 @@ def restart_server():
         time.sleep(2)
 
         # Restart the server by running the entrypoint command in a subprocess
-        # This spawns a new server process
+        # This spawns a new server process with the same args
         print("Starting new server process...")
         server_path = os.getenv('SERVER_PATH', '/home/steam/vein-server')
 
         # Build the command to restart the server
+        # Note: entrypoint.py will regenerate the default flags from env vars
+        # Any custom flags from the original container start won't be preserved
+        # unless they were set via environment variables
         restart_cmd = ['/usr/bin/python3', '/entrypoint.py']
 
         # Start the new server process in the background
@@ -385,7 +402,9 @@ def restart_server():
             'success': True,
             'message': 'Server restart initiated',
             'previous_pid': pid,
-            'note': 'Server is restarting. It may take a few moments to come back online.'
+            'server_args_detected': server_args,
+            'note': 'Server is restarting with flags from environment variables. Custom CMD flags from container start are not preserved.',
+            'recommendation': 'Set all server flags via environment variables (GAME_PORT, SERVER_MULTIHOME_IP, etc.) for reliable restarts'
         })
     except psutil.NoSuchProcess:
         return jsonify({
@@ -421,6 +440,137 @@ def get_server_status():
             'server_running': False,
             'status': 'unknown'
         })
+
+
+@app.route('/api/server/update', methods=['POST'])
+@require_api_key
+def update_server():
+    """Update the Vein server using SteamCMD.
+    
+    Note: SteamCMD cannot reliably detect if an update is available before downloading.
+    This endpoint will run app_update which downloads any available updates.
+    The server should be stopped before updating.
+    """
+    # Check if server is running
+    proc = get_server_process()
+    
+    if proc:
+        return jsonify({
+            'error': 'Server is currently running',
+            'message': 'Please stop the server before updating',
+            'suggestion': 'Use POST /api/server/restart to restart after stopping, or stop manually first'
+        }), 400
+
+    if not os.path.exists(STEAMCMD_PATH):
+        return jsonify({
+            'error': 'SteamCMD not found',
+            'path': STEAMCMD_PATH
+        }), 500
+
+    try:
+        print(f"Running SteamCMD update for AppID {APPID}...")
+        
+        # Get Steam credentials from environment
+        steam_user = os.getenv('STEAM_USER', 'anonymous')
+        steam_pass = os.getenv('STEAM_PASS', '')
+        steam_auth = os.getenv('STEAM_AUTH', '')
+
+        # Build SteamCMD command
+        cmd = [
+            STEAMCMD_PATH,
+            '+force_install_dir', SERVER_PATH,
+            '+login', steam_user, steam_pass, steam_auth,
+            '+app_update', APPID, 'validate',
+            '+quit'
+        ]
+
+        # Run SteamCMD update
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=600  # 10 minute timeout
+        )
+
+        # Parse output to detect if update occurred
+        output = result.stdout + result.stderr
+        update_occurred = 'downloading' in output.lower() or 'update required' in output.lower()
+        
+        if result.returncode == 0:
+            return jsonify({
+                'success': True,
+                'message': 'Server update completed',
+                'appid': APPID,
+                'update_detected': update_occurred,
+                'note': 'Start the server to apply changes' if not proc else 'Server will need to be restarted',
+                'output_snippet': output[-500:] if len(output) > 500 else output  # Last 500 chars
+            })
+        else:
+            return jsonify({
+                'error': 'SteamCMD update failed',
+                'return_code': result.returncode,
+                'output': output[-1000:] if len(output) > 1000 else output
+            }), 500
+
+    except subprocess.TimeoutExpired:
+        return jsonify({
+            'error': 'SteamCMD update timed out',
+            'message': 'Update took longer than 10 minutes'
+        }), 500
+    except Exception as e:
+        return jsonify({
+            'error': f'Failed to update server: {str(e)}'
+        }), 500
+
+
+@app.route('/api/server/update-info', methods=['GET'])
+def get_update_info():
+    """Get information about server installation and potential updates.
+    
+    Note: SteamCMD cannot detect available updates without downloading them.
+    This endpoint provides installation metadata instead.
+    """
+    try:
+        # Check for appmanifest file which contains installation info
+        manifest_pattern = f'appmanifest_{APPID}.acf'
+        steamapps_dir = os.path.join(SERVER_PATH, '..', 'steamapps')
+        manifest_path = os.path.join(steamapps_dir, manifest_pattern)
+        
+        install_info = {
+            'appid': APPID,
+            'server_path': SERVER_PATH,
+            'installed': os.path.exists(os.path.join(SERVER_PATH, 'VeinServer.sh')) or 
+                        os.path.exists(os.path.join(SERVER_PATH, 'VeinServer')),
+        }
+
+        # Try to read manifest file for build ID
+        if os.path.exists(manifest_path):
+            try:
+                with open(manifest_path, 'r') as f:
+                    content = f.read()
+                    # Parse ACF format (simple key-value)
+                    for line in content.split('\n'):
+                        if '"buildid"' in line.lower():
+                            build_id = line.split('"')[-2] if '"' in line else None
+                            if build_id:
+                                install_info['build_id'] = build_id
+                        elif '"timeupdated"' in line.lower():
+                            timestamp = line.split('"')[-2] if '"' in line else None
+                            if timestamp:
+                                install_info['last_updated'] = datetime.fromtimestamp(int(timestamp)).isoformat()
+            except Exception as e:
+                install_info['manifest_error'] = str(e)
+
+        return jsonify({
+            'install_info': install_info,
+            'note': 'SteamCMD cannot check for updates without downloading. Use POST /api/server/update to update.',
+            'limitations': 'Steam API does not provide a reliable way to check for available updates before downloading'
+        })
+
+    except Exception as e:
+        return jsonify({
+            'error': f'Failed to get update info: {str(e)}'
+        }), 500
 
 
 if __name__ == '__main__':
