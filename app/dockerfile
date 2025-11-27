@@ -24,19 +24,19 @@ LABEL org.opencontainers.image.description="A Docker container for running a Vei
 
 
 # Environment variables for server installation and paths
-ENV STEAM_USER anonymous
-ENV STEAM_PASS ""
-ENV STEAM_AUTH ""
-ENV APPID 2131400
-ENV SERVER_PATH /home/steam/vein-server
-ENV CONFIG_DIR_NAME LinuxServer
-ENV CONFIG_PATH ${SERVER_PATH}/Vein/Saved/Config/${CONFIG_DIR_NAME}
-ENV LOG_DIR ${SERVER_PATH}/Vein/Saved/Logs
+ENV STEAM_USER=anonymous
+ENV STEAM_PASS=""
+ENV STEAM_AUTH=""
+ENV APPID=2131400
+ENV SERVER_PATH=/home/steam/vein-server
+ENV CONFIG_DIR_NAME=LinuxServer
+ENV CONFIG_PATH=${SERVER_PATH}/Vein/Saved/Config/${CONFIG_DIR_NAME}
+ENV LOG_DIR=${SERVER_PATH}/Vein/Saved/Logs
 
 # --- Default Server Settings (can be overridden at runtime via -e) ---
 
 # Game.ini - [/Script/Engine.GameSession]
-ENV MAX_PLAYERS 16
+ENV MAX_PLAYERS=16
 
 # Game.ini - [/Script/Vein.VeinGameSession]
 ENV SERVER_PUBLIC=True
@@ -54,16 +54,20 @@ ENV SERVER_API_PORT=9081
 ENV SERVER_API_KEY=""
 
 # Game.ini - [OnlineSubsystemSteam]
-ENV GAME_SERVER_QUERY_PORT 27015 # UDP Query Port for Steam
-ENV VAC_ENABLED 0 # 0 for False, 1 for True
+# UDP Query Port for Steam
+ENV GAME_SERVER_QUERY_PORT=27015
+# 0 for False, 1 for True
+ENV VAC_ENABLED=0
 
 # Game.ini - [URL] & Command Line
-ENV GAME_PORT 7777 # UDP Game Port
+# UDP Game Port
+ENV GAME_PORT=7777
 
 # Game.ini - [/Script/Vein.ServerSettings]
-ENV SHOW_SCOREBOARD_BADGES 1 # 0 for False, 1 for True
-ENV DISCORD_WEBHOOK_URL ""
-ENV DISCORD_ADMIN_WEBHOOK_URL ""
+# 0 for False, 1 for True
+ENV SHOW_SCOREBOARD_BADGES=1
+ENV DISCORD_WEBHOOK_URL=""
+ENV DISCORD_ADMIN_WEBHOOK_URL=""
 
 # Engine.ini - [ConsoleVariables]
 # Prefix with CVAR_ followed by the exact console variable name from Vein docs
@@ -95,9 +99,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     procps \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python dependencies for admin API
-COPY requirements.txt /tmp/requirements.txt
-RUN pip3 install --no-cache-dir -r /tmp/requirements.txt && rm /tmp/requirements.txt
+# Install Python dependencies for server API
+COPY --chown=root:root requirements.txt /tmp/requirements.txt
+RUN pip3 install --break-system-packages --no-cache-dir -r /tmp/requirements.txt && rm /tmp/requirements.txt
 
 # Create directory for the server and config, set permissions
 RUN mkdir -p ${SERVER_PATH} ${CONFIG_PATH} ${LOG_DIR} && \
