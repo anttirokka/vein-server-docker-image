@@ -102,11 +102,42 @@ def write_ini_file(filepath, data):
 
 
 def get_server_process():
-    """Find the Vein server process."""
+    """Find the Vein server process.
+
+    Returns the main VeinServer process (not the shell wrapper).
+    """
+    for proc in psutil.process_iter(['pid', 'name', 'cmdline', 'exe']):
+        try:
+            cmdline = proc.info['cmdline']
+            if not cmdline:
+                continue
+
+            # Look for the actual VeinServer binary executable
+            # Check if the executable path contains VeinServer-Linux-Test
+            if proc.info['exe'] and 'VeinServer-Linux-Test' in proc.info['exe']:
+                return proc
+
+            # Fallback: check command line for VeinServer-Linux-Test
+            if any('VeinServer-Linux-Test' in cmd for cmd in cmdline):
+                return proc
+
+            # Skip anything with .sh in the name or command
+            if any('.sh' in cmd for cmd in cmdline):
+                continue
+
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+    return None
+
+
+def get_root_server_process():
+    """Find the root server process (usually the shell wrapper at PID 1 or the VeinServer.sh script).
+
+    This is used for restart to kill the entire process tree.
+    """
     for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
         try:
-            if 'VeinServer' in proc.info['name'] or \
-               (proc.info['cmdline'] and any('VeinServer' in cmd for cmd in proc.info['cmdline'])):
+            if proc.info['cmdline'] and any('VeinServer.sh' in cmd for cmd in proc.info['cmdline']):
                 return proc
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             continue
@@ -389,73 +420,65 @@ def format_uptime(seconds):
 @require_api_key
 def restart_server():
     """Restart the Vein server process."""
-    proc = get_server_process()
+    # First try to find the root process (shell wrapper)
+    root_proc = get_root_server_process()
+    main_proc = get_server_process()
 
-    if not proc:
+    if not main_proc and not root_proc:
         return jsonify({
             'error': 'Server process not found',
             'server_running': False
         }), 404
 
+    # Use root process if found, otherwise use main process
+    proc = root_proc if root_proc else main_proc
+
     try:
         pid = proc.pid
         cmdline = proc.cmdline()
 
-        # Extract any custom server arguments from the original command line
-        # The cmdline typically looks like: ['./VeinServer.sh', '-log', '-QueryPort=27015', '-Port=7777', ...]
-        server_args = []
-        if cmdline:
-            # Find VeinServer in the command line and extract args after it
-            for i, arg in enumerate(cmdline):
-                if 'VeinServer' in arg and i + 1 < len(cmdline):
-                    server_args = cmdline[i + 1:]
-                    break
-
         logging.info(f"Sending SIGTERM to server process (PID: {pid})")
-        logging.info(f"Original server args: {server_args}")
+        logging.info(f"Process command line: {' '.join(cmdline)}")
 
-        # Terminate all child processes first
+        # Get all processes we need to terminate
+        processes_to_kill = [proc]
         try:
             children = proc.children(recursive=True)
             logging.info(f"Found {len(children)} child processes")
-            for child in children:
-                try:
-                    logging.info(f"Terminating child process PID: {child.pid}")
-                    child.terminate()
-                except (psutil.NoSuchProcess, psutil.AccessDenied):
-                    pass
+            processes_to_kill.extend(children)
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             pass
 
-        # Send SIGTERM to main process for graceful shutdown
-        proc.terminate()
-
-        # Wait for process to exit (max 45 seconds)
-        logging.info("Waiting for server to shut down...")
-        try:
-            proc.wait(timeout=45)
-            logging.info("Server shut down gracefully")
-        except psutil.TimeoutExpired:
-            # Force kill children first if graceful shutdown failed
-            logging.info("Server didn't shut down gracefully, force killing children...")
+        # Terminate all processes
+        for p in processes_to_kill:
             try:
-                children = proc.children(recursive=True)
-                for child in children:
-                    try:
-                        child.kill()
-                    except (psutil.NoSuchProcess, psutil.AccessDenied):
-                        pass
+                logging.info(f"Terminating process PID: {p.pid} ({p.name()})")
+                p.terminate()
             except (psutil.NoSuchProcess, psutil.AccessDenied):
                 pass
 
-            # Force kill main process
-            logging.info("Force killing main process...")
-            proc.kill()
-            try:
-                proc.wait(timeout=10)
-            except psutil.TimeoutExpired:
+        # Wait for processes to exit (max 45 seconds)
+        logging.info("Waiting for server to shut down...")
+        gone, alive = psutil.wait_procs(processes_to_kill, timeout=45)
+
+        if gone:
+            logging.info(f"Server shut down gracefully ({len(gone)} processes terminated)")
+
+        if alive:
+            # Force kill remaining processes
+            logging.info(f"Force killing {len(alive)} remaining processes...")
+            for p in alive:
+                try:
+                    logging.info(f"Force killing PID: {p.pid}")
+                    p.kill()
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    pass
+
+            # Wait again
+            gone, alive = psutil.wait_procs(alive, timeout=10)
+            if alive:
                 return jsonify({
-                    'error': 'Server process could not be terminated',
+                    'error': f'{len(alive)} server processes could not be terminated',
                     'note': 'You may need to restart the container'
                 }), 500
 
@@ -491,7 +514,6 @@ def restart_server():
             'success': True,
             'message': 'Server restart initiated',
             'previous_pid': pid,
-            'server_args_detected': server_args,
             'discord_notification_sent': discord_sent,
             'note': 'Server is restarting with flags from environment variables. Custom CMD flags from container start are not preserved.',
             'recommendation': 'Set all server flags via environment variables (GAME_PORT, SERVER_MULTIHOME_IP, etc.) for reliable restarts'
