@@ -10,6 +10,8 @@ import os
 import configparser
 import psutil
 import time
+import signal
+import subprocess
 from pathlib import Path
 from datetime import datetime
 
@@ -320,6 +322,105 @@ def format_uptime(seconds):
     parts.append(f"{secs}s")
 
     return " ".join(parts)
+
+
+@app.route('/api/server/restart', methods=['POST'])
+@require_api_key
+def restart_server():
+    """Restart the Vein server process."""
+    proc = get_server_process()
+
+    if not proc:
+        return jsonify({
+            'error': 'Server process not found',
+            'server_running': False
+        }), 404
+
+    try:
+        pid = proc.pid
+        cmdline = proc.cmdline()
+
+        # Send SIGTERM for graceful shutdown
+        print(f"Sending SIGTERM to server process (PID: {pid})")
+        proc.terminate()
+
+        # Wait for process to exit (max 30 seconds)
+        print("Waiting for server to shut down...")
+        try:
+            proc.wait(timeout=30)
+            print("Server shut down gracefully")
+        except psutil.TimeoutExpired:
+            # Force kill if graceful shutdown failed
+            print("Server didn't shut down gracefully, forcing...")
+            proc.kill()
+            try:
+                proc.wait(timeout=5)
+            except psutil.TimeoutExpired:
+                return jsonify({
+                    'error': 'Server process could not be terminated',
+                    'note': 'You may need to restart the container'
+                }), 500
+
+        # Wait a moment for cleanup
+        time.sleep(2)
+
+        # Restart the server by running the entrypoint command in a subprocess
+        # This spawns a new server process
+        print("Starting new server process...")
+        server_path = os.getenv('SERVER_PATH', '/home/steam/vein-server')
+
+        # Build the command to restart the server
+        restart_cmd = ['/usr/bin/python3', '/entrypoint.py']
+
+        # Start the new server process in the background
+        subprocess.Popen(
+            restart_cmd,
+            cwd=server_path,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True
+        )
+
+        return jsonify({
+            'success': True,
+            'message': 'Server restart initiated',
+            'previous_pid': pid,
+            'note': 'Server is restarting. It may take a few moments to come back online.'
+        })
+    except psutil.NoSuchProcess:
+        return jsonify({
+            'error': 'Server process disappeared during restart'
+        }), 500
+    except Exception as e:
+        return jsonify({
+            'error': f'Failed to restart server: {str(e)}'
+        }), 500
+
+
+@app.route('/api/server/status', methods=['GET'])
+def get_server_status():
+    """Get current server status."""
+    proc = get_server_process()
+
+    if not proc:
+        return jsonify({
+            'server_running': False,
+            'status': 'offline'
+        })
+
+    try:
+        return jsonify({
+            'server_running': True,
+            'status': 'online',
+            'pid': proc.pid,
+            'uptime_seconds': time.time() - proc.create_time(),
+            'uptime_formatted': format_uptime(time.time() - proc.create_time())
+        })
+    except (psutil.NoSuchProcess, psutil.AccessDenied):
+        return jsonify({
+            'server_running': False,
+            'status': 'unknown'
+        })
 
 
 if __name__ == '__main__':

@@ -4,6 +4,7 @@ This API provides endpoints for monitoring server performance and managing confi
 
 ## Features
 
+- **Server Status & Control**: Check server status and restart the server remotely
 - **Server Metrics**: Real-time CPU, memory, and disk usage
 - **Configuration Management**: Read and update Game.ini and Engine.ini
 - **Log Access**: View server logs without SSH access (protected by API key)
@@ -65,6 +66,40 @@ curl http://localhost:8856/health
   "status": "healthy",
   "timestamp": "2025-11-27T12:00:00.000000",
   "version": "1.0.0"
+}
+```
+
+---
+
+### Server Status
+
+```bash
+GET /api/server/status
+```
+
+Get current server status (running/offline).
+
+**Example:**
+```bash
+curl http://localhost:8856/api/server/status
+```
+
+**Response (server running):**
+```json
+{
+  "server_running": true,
+  "status": "online",
+  "pid": 1234,
+  "uptime_seconds": 3600,
+  "uptime_formatted": "1h 0m 0s"
+}
+```
+
+**Response (server offline):**
+```json
+{
+  "server_running": false,
+  "status": "offline"
 }
 ```
 
@@ -212,6 +247,46 @@ curl -X PUT http://localhost:8856/api/config/game \
 ```
 
 **Important**: Configuration changes require a server restart to take effect!
+
+---
+
+### Restart Server
+
+```bash
+POST /api/server/restart
+```
+
+Restart the Vein server process inside the container. **Requires API key.**
+
+This endpoint gracefully shuts down the server and restarts it. The server will be unavailable for a few moments during the restart.
+
+**Headers:**
+```
+X-API-Key: your-secret-key-here
+```
+
+**Example:**
+```bash
+curl -X POST http://localhost:8856/api/server/restart \
+  -H "X-API-Key: your-secret-key-here"
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Server restart initiated",
+  "previous_pid": 1234,
+  "note": "Server is restarting. It may take a few moments to come back online."
+}
+```
+
+**Use Cases:**
+- Apply configuration changes made via the API
+- Recover from a hung or unresponsive server
+- Scheduled maintenance restarts
+
+**Note**: The restart is handled by sending signals to the server process. If the server doesn't restart automatically, the container's process manager will handle it.
 
 ---
 
