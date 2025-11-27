@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Admin API for Vein Server - Provides endpoints for server metrics and config management.
+Server API for Vein Server - Provides endpoints for server metrics and config management.
 Runs alongside the game server and http-forwarder.
 """
 
@@ -22,11 +22,11 @@ SERVER_PATH = os.getenv('SERVER_PATH', '/home/steam/vein-server')
 LOG_DIR = os.path.join(SERVER_PATH, 'Vein/Saved/Logs')
 
 # API Key for protected operations (optional security)
-API_KEY = os.getenv('ADMIN_API_KEY', '')
+API_KEY = os.getenv('SERVER_API_KEY', '')
 # Port configuration
-ADMIN_API_PORT = int(os.getenv('ADMIN_API_PORT', '9081'))
+SERVER_API_PORT = int(os.getenv('SERVER_API_PORT', '9081'))
 # Enable/disable API
-ADMIN_API_ENABLED = os.getenv('ADMIN_API_ENABLED', 'false').lower() == 'true'
+SERVER_API_ENABLED = os.getenv('SERVER_API_ENABLED', 'false').lower() == 'true'
 
 
 def require_api_key(f):
@@ -323,12 +323,12 @@ def format_uptime(seconds):
 
 
 if __name__ == '__main__':
-    if not ADMIN_API_ENABLED:
-        print("Admin API is disabled (ADMIN_API_ENABLED=false). Exiting.")
+    if not SERVER_API_ENABLED:
+        print("Server API is disabled (SERVER_API_ENABLED=false). Exiting.")
         import sys
         sys.exit(0)
 
-    print(f"Starting Admin API on port {ADMIN_API_PORT}")
+    print(f"Starting Server API on port {SERVER_API_PORT}")
     print(f"Config path: {CONFIG_PATH}")
     print(f"Server path: {SERVER_PATH}")
 
@@ -337,4 +337,4 @@ if __name__ == '__main__':
     else:
         print("Warning: No API key set. Protected operations are unprotected!")
 
-    app.run(host='0.0.0.0', port=ADMIN_API_PORT, debug=False)
+    app.run(host='0.0.0.0', port=SERVER_API_PORT, debug=False)

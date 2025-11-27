@@ -39,19 +39,19 @@ ENV LOG_DIR ${SERVER_PATH}/Vein/Saved/Logs
 ENV MAX_PLAYERS 16
 
 # Game.ini - [/Script/Vein.VeinGameSession]
-ENV SERVER_PUBLIC True
-ENV SERVER_NAME "Vein Docker Server"
-ENV SERVER_BIND_ADDR "0.0.0.0"
-ENV SUPER_ADMIN_STEAM_IDS ""
-ENV ADMIN_STEAM_IDS ""
-ENV HEARTBEAT_INTERVAL 5.0
-ENV SERVER_PASSWORD ""
-ENV HTTP_PORT ""
+ENV SERVER_PUBLIC=True
+ENV SERVER_NAME="Vein Docker Server"
+ENV SERVER_BIND_ADDR="0.0.0.0"
+ENV SUPER_ADMIN_STEAM_IDS=""
+ENV ADMIN_STEAM_IDS=""
+ENV HEARTBEAT_INTERVAL=5.0
+ENV SERVER_PASSWORD=""
+ENV HTTP_PORT=""
 
-# Admin API settings
-ENV ADMIN_API_ENABLED false
-ENV ADMIN_API_PORT 9081
-ENV ADMIN_API_KEY ""
+# Server API settings
+ENV SERVER_API_ENABLED=false
+ENV SERVER_API_PORT=9081
+ENV SERVER_API_KEY=""
 
 # Game.ini - [OnlineSubsystemSteam]
 ENV GAME_SERVER_QUERY_PORT 27015 # UDP Query Port for Steam
@@ -79,7 +79,7 @@ EXPOSE 7777/udp
 EXPOSE 27015/udp
 # HTTP port for query API (TCP) - forwarded from 9080 to localhost:8080
 EXPOSE 9080/tcp
-# Admin API port
+# Server API port
 EXPOSE 9081/tcp
 
 # Install gosu for safe privilege dropping at runtime
@@ -107,8 +107,8 @@ RUN mkdir -p ${SERVER_PATH} ${CONFIG_PATH} ${LOG_DIR} && \
 # Copy entrypoint script and make it executable (as root)
 COPY --chown=steam:steam entrypoint.py /entrypoint.py
 COPY --chown=steam:steam http-forwarder.py /http-forwarder.py
-COPY --chown=steam:steam admin-api.py /admin-api.py
-RUN chmod +x /entrypoint.py && chmod +x /http-forwarder.py && chmod +x /admin-api.py
+COPY --chown=steam:steam server-api.py /server-api.py
+RUN chmod +x /entrypoint.py && chmod +x /http-forwarder.py && chmod +x /server-api.py
 
 WORKDIR ${SERVER_PATH}
 
@@ -119,5 +119,5 @@ WORKDIR ${SERVER_PATH}
 # Set the entrypoint
 #ENTRYPOINT ["/entrypoint.sh"]
 # Replace entrypoint with a small runtime wrapper that fixes ownership on mounted volumes
-# Start http-forwarder and admin-api in background, then run main entrypoint
-ENTRYPOINT ["bash", "-lc", "chown -R steam:steam ${SERVER_PATH} ${SERVER_PATH}/Vein/Saved ${SERVER_PATH}/Vein/Saved/Config 2>/dev/null || true; python3 /http-forwarder.py & python3 /admin-api.py & exec python3 /entrypoint.py"]
+# Start http-forwarder and server-api in background, then run main entrypoint
+ENTRYPOINT ["bash", "-lc", "chown -R steam:steam ${SERVER_PATH} ${SERVER_PATH}/Vein/Saved ${SERVER_PATH}/Vein/Saved/Config 2>/dev/null || true; python3 /http-forwarder.py & python3 /server-api.py & exec python3 /entrypoint.py"]

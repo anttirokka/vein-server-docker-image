@@ -1,4 +1,4 @@
-# Vein Server Admin API
+# Vein Server API
 
 This API provides endpoints for monitoring server performance and managing configuration files.
 
@@ -12,21 +12,21 @@ This API provides endpoints for monitoring server performance and managing confi
 
 ## Quick Start
 
-The Admin API can be enabled when starting your Vein server Docker container.
+The Server API can be enabled when starting your Vein server Docker container.
 
 ### Enable the API
 
 ```yaml
 environment:
-  - ADMIN_API_ENABLED=true  # Set to true to enable the API
-  - ADMIN_API_PORT=9081      # Optional: custom port (default: 9081)
-  - ADMIN_API_KEY=your-secret-key-here  # Required for security
+  - SERVER_API_ENABLED=true  # Set to true to enable the API
+  - SERVER_API_PORT=9081      # Optional: custom port (default: 9081)
+  - SERVER_API_KEY=your-secret-key-here  # Required for security
 ```
 
 ### Port Configuration
 
 - **Default Port**: 9081 (inside container)
-- **Environment Variable**: `ADMIN_API_PORT`
+- **Environment Variable**: `SERVER_API_PORT`
 - **Docker Compose**: Map to host port (e.g., `8856:9081`)
 
 ### Security
@@ -35,7 +35,7 @@ environment:
 
 ```yaml
 environment:
-  - ADMIN_API_KEY=your-secret-key-here
+  - SERVER_API_KEY=your-secret-key-here
 ```
 
 Include the key in requests:
@@ -415,14 +415,14 @@ services:
       - "7777:7777/udp"     # Game port
       - "27015:27015/udp"   # Query port
       - "8855:9080/tcp"     # Game HTTP API
-      - "8856:9081/tcp"     # Admin API
+      - "8856:9081/tcp"     # Server API
     environment:
       - SERVER_NAME=My Vein Server
       - MAX_PLAYERS=16
       - HTTP_PORT=8080
-      - ADMIN_API_ENABLED=true
-      - ADMIN_API_PORT=9081
-      - ADMIN_API_KEY=change-me-to-something-secure
+      - SERVER_API_ENABLED=true
+      - SERVER_API_PORT=9081
+      - SERVER_API_KEY=change-me-to-something-secure
     volumes:
       - ./vein-data:/home/steam/vein-server
     restart: unless-stopped
@@ -513,7 +513,7 @@ docker restart vein-server
 ## Security Recommendations
 
 1. **Always set an API key** for production environments - ALL endpoints require it
-2. **Always enable explicitly** with `ADMIN_API_ENABLED=true`
+2. **Always enable explicitly** with `SERVER_API_ENABLED=true`
 3. **Use HTTPS** when exposing the API publicly (use a reverse proxy like nginx or Traefik)
 4. **Restrict access** using firewall rules or Docker networks
 5. **Rotate API keys** regularly
