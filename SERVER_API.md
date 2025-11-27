@@ -46,6 +46,22 @@ Include the key in requests:
 
 **All endpoints (including read-only ones like metrics and logs) require the API key when configured.**
 
+### Discord Notifications
+
+The API can send notifications to Discord webhooks for important events:
+
+```yaml
+environment:
+  - DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/...  # For general messages
+  - DISCORD_ADMIN_WEBHOOK_URL=https://discord.com/api/webhooks/...  # For admin notifications
+```
+
+**Events that trigger Discord notifications:**
+- Server restart (admin webhook)
+- Server updates (admin webhook)
+
+Configure at least `DISCORD_ADMIN_WEBHOOK_URL` to receive API operation notifications.
+
 ## API Endpoints
 
 ### Health Check
@@ -279,10 +295,18 @@ curl -X POST http://localhost:8856/api/server/restart \
   "message": "Server restart initiated",
   "previous_pid": 1234,
   "server_args_detected": ["-log", "-QueryPort=27015", "-Port=7777"],
+  "discord_notification_sent": true,
   "note": "Server is restarting with flags from environment variables. Custom CMD flags from container start are not preserved.",
   "recommendation": "Set all server flags via environment variables (GAME_PORT, SERVER_MULTIHOME_IP, etc.) for reliable restarts"
 }
 ```
+
+**Discord Notification:**
+If `DISCORD_ADMIN_WEBHOOK_URL` is configured, a notification will be automatically sent to Discord when the server restarts:
+- Embed title: "Server Restarted"
+- Contains server name, previous PID, and timestamp
+- Blue color indicator
+- Sent to admin webhook only
 
 **Use Cases:**
 - Apply configuration changes made via the API
@@ -340,9 +364,9 @@ curl http://localhost:8856/api/server/update-info
 POST /api/server/update
 ```
 
-Update the Vein server using SteamCMD. **Requires API key.**
+Update the Vein server by restarting it. **Requires API key.**
 
-**Important**: The server must be stopped before updating. This endpoint will run `app_update` which downloads any available updates.
+The `entrypoint.py` automatically runs SteamCMD `app_update` on every container start, so this endpoint simply restarts the server which triggers the update process. **The server can be running** - it will be stopped, updated, and restarted automatically.
 
 **Headers:**
 ```
@@ -359,33 +383,32 @@ curl -X POST http://localhost:8856/api/server/update \
 ```json
 {
   "success": true,
-  "message": "Server update completed",
+  "message": "Server update initiated",
   "appid": "2131400",
-  "update_detected": true,
-  "note": "Start the server to apply changes",
-  "output_snippet": "...SteamCMD output..."
+  "discord_notification_sent": true,
+  "note": "The entrypoint will run SteamCMD app_update and restart the server. This may take a few minutes.",
+  "how_it_works": "entrypoint.py automatically runs install_or_update_server() on every start"
 }
 ```
 
-**Response (Server Running):**
-```json
-{
-  "error": "Server is currently running",
-  "message": "Please stop the server before updating",
-  "suggestion": "Use POST /api/server/restart to restart after stopping, or stop manually first"
-}
-```
+**Discord Notification:**
+If `DISCORD_ADMIN_WEBHOOK_URL` is configured, a notification will be automatically sent to Discord when the update starts:
+- Embed title: "Server Update Initiated"
+- Contains App ID and timestamp
+- Blue color indicator (update in progress)
+- Sent to admin webhook only
 
-**Limitations**:
-- SteamCMD cannot detect if updates are available without downloading
-- The endpoint will always attempt to update, even if already up-to-date
-- Updates can take several minutes depending on size and connection speed
-- Server must be stopped first to prevent file corruption
+**How it works:**
+1. Stops the server gracefully (if running)
+2. Calls `entrypoint.py` which runs SteamCMD's `app_update`
+3. Updates config files from environment variables
+4. Starts the server with updated files
 
-**Workflow**:
-1. Stop the server (or check it's not running)
-2. Call this endpoint to update
-3. Start the server again (or use `/api/server/restart`)
+**Benefits of this approach:**
+- Simpler - no need to manually run SteamCMD
+- Consistent - same update path as container restart
+- Reliable - leverages the existing, tested entrypoint logic
+- Config refresh - updates Game.ini/Engine.ini from env vars
 
 ---
 

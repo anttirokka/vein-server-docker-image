@@ -12,6 +12,7 @@ import psutil
 import time
 import signal
 import subprocess
+import requests
 from pathlib import Path
 from datetime import datetime
 
@@ -31,6 +32,9 @@ API_KEY = os.getenv('SERVER_API_KEY', '')
 SERVER_API_PORT = int(os.getenv('SERVER_API_PORT', '9081'))
 # Enable/disable API
 SERVER_API_ENABLED = os.getenv('SERVER_API_ENABLED', 'false').lower() == 'true'
+# Discord webhooks
+DISCORD_WEBHOOK_URL = os.getenv('DISCORD_WEBHOOK_URL', '')
+DISCORD_ADMIN_WEBHOOK_URL = os.getenv('DISCORD_ADMIN_WEBHOOK_URL', '')
 
 
 def require_api_key(f):
@@ -88,6 +92,42 @@ def get_server_process():
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             continue
     return None
+
+
+def send_discord_notification(message, title="Vein Server Notification", color=3447003, use_admin=False):
+    """Send a notification to Discord webhook.
+    
+    Args:
+        message: The message content
+        title: Embed title
+        color: Embed color (decimal) - 3447003 is blue, 15158332 is red, 3066993 is green
+        use_admin: If True, use admin webhook; otherwise use regular webhook
+    """
+    webhook_url = DISCORD_ADMIN_WEBHOOK_URL if use_admin else DISCORD_WEBHOOK_URL
+    
+    if not webhook_url:
+        return False
+    
+    try:
+        embed = {
+            "title": title,
+            "description": message,
+            "color": color,
+            "timestamp": datetime.utcnow().isoformat(),
+            "footer": {
+                "text": "Server API"
+            }
+        }
+        
+        payload = {
+            "embeds": [embed]
+        }
+        
+        response = requests.post(webhook_url, json=payload, timeout=5)
+        return response.status_code in [200, 204]
+    except Exception as e:
+        print(f"Failed to send Discord notification: {e}")
+        return False
 
 
 @app.route('/health', methods=['GET'])
@@ -397,12 +437,24 @@ def restart_server():
             stderr=subprocess.DEVNULL,
             start_new_session=True
         )
+        
+        # Send Discord notification
+        server_name = os.getenv('SERVER_NAME', 'Vein Server')
+        discord_sent = send_discord_notification(
+            f"🔄 **{server_name}** has been restarted via API.\n\n"
+            f"**Previous PID:** {pid}\n"
+            f"**Timestamp:** {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC",
+            title="Server Restarted",
+            color=3447003,  # Blue
+            use_admin=True
+        )
 
         return jsonify({
             'success': True,
             'message': 'Server restart initiated',
             'previous_pid': pid,
             'server_args_detected': server_args,
+            'discord_notification_sent': discord_sent,
             'note': 'Server is restarting with flags from environment variables. Custom CMD flags from container start are not preserved.',
             'recommendation': 'Set all server flags via environment variables (GAME_PORT, SERVER_MULTIHOME_IP, etc.) for reliable restarts'
         })
@@ -445,78 +497,79 @@ def get_server_status():
 @app.route('/api/server/update', methods=['POST'])
 @require_api_key
 def update_server():
-    """Update the Vein server using SteamCMD.
+    """Update the Vein server by restarting it.
     
-    Note: SteamCMD cannot reliably detect if an update is available before downloading.
-    This endpoint will run app_update which downloads any available updates.
-    The server should be stopped before updating.
+    The entrypoint.py automatically runs SteamCMD app_update on every start,
+    so restarting the server will check for and install any available updates.
+    
+    This can be done with server running - it will be stopped, updated, and restarted.
     """
-    # Check if server is running
     proc = get_server_process()
     
-    if proc:
-        return jsonify({
-            'error': 'Server is currently running',
-            'message': 'Please stop the server before updating',
-            'suggestion': 'Use POST /api/server/restart to restart after stopping, or stop manually first'
-        }), 400
-
-    if not os.path.exists(STEAMCMD_PATH):
-        return jsonify({
-            'error': 'SteamCMD not found',
-            'path': STEAMCMD_PATH
-        }), 500
-
     try:
-        print(f"Running SteamCMD update for AppID {APPID}...")
+        print(f"Initiating server update for AppID {APPID}...")
         
-        # Get Steam credentials from environment
-        steam_user = os.getenv('STEAM_USER', 'anonymous')
-        steam_pass = os.getenv('STEAM_PASS', '')
-        steam_auth = os.getenv('STEAM_AUTH', '')
-
-        # Build SteamCMD command
-        cmd = [
-            STEAMCMD_PATH,
-            '+force_install_dir', SERVER_PATH,
-            '+login', steam_user, steam_pass, steam_auth,
-            '+app_update', APPID, 'validate',
-            '+quit'
-        ]
-
-        # Run SteamCMD update
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=600  # 10 minute timeout
-        )
-
-        # Parse output to detect if update occurred
-        output = result.stdout + result.stderr
-        update_occurred = 'downloading' in output.lower() or 'update required' in output.lower()
-        
-        if result.returncode == 0:
-            return jsonify({
-                'success': True,
-                'message': 'Server update completed',
-                'appid': APPID,
-                'update_detected': update_occurred,
-                'note': 'Start the server to apply changes' if not proc else 'Server will need to be restarted',
-                'output_snippet': output[-500:] if len(output) > 500 else output  # Last 500 chars
-            })
+        # If server is running, stop it first
+        if proc:
+            pid = proc.pid
+            print(f"Stopping server (PID: {pid}) for update...")
+            
+            proc.terminate()
+            try:
+                proc.wait(timeout=30)
+                print("Server stopped gracefully")
+            except psutil.TimeoutExpired:
+                print("Force killing server...")
+                proc.kill()
+                try:
+                    proc.wait(timeout=5)
+                except psutil.TimeoutExpired:
+                    return jsonify({
+                        'error': 'Could not stop server for update',
+                        'note': 'Server process could not be terminated'
+                    }), 500
+            
+            time.sleep(2)
         else:
-            return jsonify({
-                'error': 'SteamCMD update failed',
-                'return_code': result.returncode,
-                'output': output[-1000:] if len(output) > 1000 else output
-            }), 500
-
-    except subprocess.TimeoutExpired:
+            print("Server is not running, will start fresh after update")
+        
+        # Start the server via entrypoint, which will run SteamCMD update
+        print("Starting entrypoint (will update and start server)...")
+        server_path = os.getenv('SERVER_PATH', '/home/steam/vein-server')
+        
+        restart_cmd = ['/usr/bin/python3', '/entrypoint.py']
+        
+        subprocess.Popen(
+            restart_cmd,
+            cwd=server_path,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True
+        )
+        
+        # Send Discord notification
+        server_name = os.getenv('SERVER_NAME', 'Vein Server')
+        notification_msg = f"⬆️ **{server_name}** is being updated via API.\n\n"
+        notification_msg += f"**App ID:** {APPID}\n"
+        notification_msg += f"**Timestamp:** {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC\n\n"
+        notification_msg += "The server is restarting and will check for updates automatically."
+        
+        discord_sent = send_discord_notification(
+            notification_msg,
+            title="Server Update Initiated",
+            color=3447003,  # Blue
+            use_admin=True
+        )
+        
         return jsonify({
-            'error': 'SteamCMD update timed out',
-            'message': 'Update took longer than 10 minutes'
-        }), 500
+            'success': True,
+            'message': 'Server update initiated',
+            'appid': APPID,
+            'discord_notification_sent': discord_sent,
+            'note': 'The entrypoint will run SteamCMD app_update and restart the server. This may take a few minutes.',
+            'how_it_works': 'entrypoint.py automatically runs install_or_update_server() on every start'
+        })
+
     except Exception as e:
         return jsonify({
             'error': f'Failed to update server: {str(e)}'
