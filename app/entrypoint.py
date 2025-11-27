@@ -31,9 +31,13 @@ def send_discord_notification(message, title="Vein Server Notification", color=3
     webhook_url = os.getenv('DISCORD_WEBHOOK_URL', '')
 
     if not webhook_url:
+        print("Discord webhook not configured (DISCORD_WEBHOOK_URL not set)")
         return False
 
     try:
+        print(f"Sending Discord notification: {title}")
+        print(f"Webhook URL (first 50 chars): {webhook_url[:50]}...")
+        
         embed = {
             "title": title,
             "description": message,
@@ -52,14 +56,16 @@ def send_discord_notification(message, title="Vein Server Notification", color=3
         )
 
         if response.status_code in (200, 204):
-            print("Discord notification sent successfully")
+            print(f"Discord notification sent successfully (status: {response.status_code})")
             return True
         else:
-            print(f"Discord notification failed: {response.status_code}")
+            print(f"Discord notification failed with status {response.status_code}: {response.text}")
             return False
 
     except Exception as e:
         print(f"Failed to send Discord notification: {e}")
+        import traceback
+        traceback.print_exc()
         return False
 
 def update_ini_value(config, section, key, value):

@@ -101,43 +101,61 @@ def write_ini_file(filepath, data):
         config.write(f, space_around_delimiters=False)
 
 
-def get_server_process():
-    """Find the Vein server process.
+def get_all_server_processes():
+    """Find all Vein server related processes including shell wrappers and the actual server.
 
-    Returns the main VeinServer process (not the shell wrapper).
+    Returns a list of processes in order: [shell_wrapper, actual_server, ...other_children]
+    Excludes Python processes to avoid killing the API itself.
     """
-    for proc in psutil.process_iter(['pid', 'name', 'cmdline', 'exe']):
+    processes = []
+    shell_wrapper = None
+    main_server = None
+
+    for proc in psutil.process_iter(['pid', 'name', 'cmdline', 'exe', 'username']):
         try:
             cmdline = proc.info['cmdline']
             if not cmdline:
                 continue
 
-            # Look for the actual VeinServer binary executable
-            # Check if the executable path contains VeinServer-Linux-Test
-            if proc.info['exe'] and 'VeinServer-Linux-Test' in proc.info['exe']:
-                return proc
+            cmdline_str = ' '.join(cmdline)
 
-            # Fallback: check command line for VeinServer-Linux-Test
-            if any('VeinServer-Linux-Test' in cmd for cmd in cmdline):
-                return proc
+            # Skip Python processes to avoid killing server-api.py, http-forwarder.py, etc.
+            if proc.info['name'] in ['python', 'python3'] or '.py' in cmdline_str:
+                continue
 
-            # Skip anything with .sh in the name or command
-            if any('.sh' in cmd for cmd in cmdline):
+            # Find the shell wrapper (./VeinServer.sh or VeinServer.sh)
+            if 'VeinServer.sh' in cmdline_str:
+                shell_wrapper = proc
+                continue
+
+            # Find the actual VeinServer binary
+            if 'VeinServer-Linux-Test' in cmdline_str or (proc.info['exe'] and 'VeinServer-Linux-Test' in proc.info['exe']):
+                main_server = proc
                 continue
 
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             continue
-    return None
+
+    # Return in the order we want to kill them: shell wrapper first, then main server
+    if shell_wrapper:
+        processes.append(shell_wrapper)
+    if main_server:
+        processes.append(main_server)
+
+    return processes
 
 
-def get_root_server_process():
-    """Find the root server process (usually the shell wrapper at PID 1 or the VeinServer.sh script).
+def get_server_process():
+    """Find the Vein server process.
 
-    This is used for restart to kill the entire process tree.
+    Returns the main VeinServer process (not the shell wrapper).
     """
-    for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+    all_procs = get_all_server_processes()
+    # Return the main server process (should be second in list if both exist)
+    for proc in all_procs:
         try:
-            if proc.info['cmdline'] and any('VeinServer.sh' in cmd for cmd in proc.info['cmdline']):
+            cmdline_str = ' '.join(proc.cmdline())
+            if 'VeinServer-Linux-Test' in cmdline_str:
                 return proc
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             continue
@@ -156,9 +174,13 @@ def send_discord_notification(message, title="Vein Server Notification", color=3
     webhook_url = DISCORD_ADMIN_WEBHOOK_URL if use_admin else DISCORD_WEBHOOK_URL
 
     if not webhook_url:
+        logging.warning(f"Discord webhook not configured (use_admin={use_admin})")
         return False
 
     try:
+        logging.info(f"Sending Discord notification to {'admin' if use_admin else 'regular'} webhook")
+        logging.debug(f"Webhook URL: {webhook_url[:50]}...")  # Log first 50 chars only
+
         embed = {
             "title": title,
             "description": message,
@@ -174,9 +196,15 @@ def send_discord_notification(message, title="Vein Server Notification", color=3
         }
 
         response = requests.post(webhook_url, json=payload, timeout=5)
-        return response.status_code in [200, 204]
+        logging.info(f"Discord webhook response: {response.status_code}")
+
+        if response.status_code not in [200, 204]:
+            logging.error(f"Discord webhook failed with status {response.status_code}: {response.text}")
+            return False
+
+        return True
     except Exception as e:
-        logging.error(f"Failed to send Discord notification: {e}")
+        logging.error(f"Failed to send Discord notification: {e}", exc_info=True)
         return False
 
 
@@ -420,42 +448,57 @@ def format_uptime(seconds):
 @require_api_key
 def restart_server():
     """Restart the Vein server process."""
-    # First try to find the root process (shell wrapper)
-    root_proc = get_root_server_process()
-    main_proc = get_server_process()
+    # Get all VeinServer related processes
+    all_server_procs = get_all_server_processes()
 
-    if not main_proc and not root_proc:
+    if not all_server_procs:
         return jsonify({
             'error': 'Server process not found',
             'server_running': False
         }), 404
 
-    # Use root process if found, otherwise use main process
-    proc = root_proc if root_proc else main_proc
-
     try:
-        pid = proc.pid
-        cmdline = proc.cmdline()
+        logging.info(f"Found {len(all_server_procs)} VeinServer processes to terminate")
 
-        logging.info(f"Sending SIGTERM to server process (PID: {pid})")
-        logging.info(f"Process command line: {' '.join(cmdline)}")
+        # Log all processes we're about to kill
+        for proc in all_server_procs:
+            try:
+                cmdline = ' '.join(proc.cmdline())
+                logging.info(f"Will terminate PID {proc.pid}: {cmdline}")
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                pass
 
-        # Get all processes we need to terminate
-        processes_to_kill = [proc]
-        try:
-            children = proc.children(recursive=True)
-            logging.info(f"Found {len(children)} child processes")
-            processes_to_kill.extend(children)
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
-            pass
+        # Collect all processes including their children
+        processes_to_kill = []
+        for proc in all_server_procs:
+            try:
+                processes_to_kill.append(proc)
+                children = proc.children(recursive=True)
+                if children:
+                    logging.info(f"Process {proc.pid} has {len(children)} child processes")
+                    # Filter out Python processes from children to avoid killing the API
+                    for child in children:
+                        try:
+                            child_name = child.name()
+                            child_cmdline = ' '.join(child.cmdline())
+                            if child_name not in ['python', 'python3'] and '.py' not in child_cmdline:
+                                processes_to_kill.append(child)
+                            else:
+                                logging.info(f"Skipping Python process PID {child.pid}: {child_cmdline}")
+                        except (psutil.NoSuchProcess, psutil.AccessDenied):
+                            pass
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                pass
+
+        logging.info(f"Total processes to terminate: {len(processes_to_kill)}")
 
         # Terminate all processes
         for p in processes_to_kill:
             try:
                 logging.info(f"Terminating process PID: {p.pid} ({p.name()})")
                 p.terminate()
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
-                pass
+            except (psutil.NoSuchProcess, psutil.AccessDenied) as e:
+                logging.warning(f"Failed to terminate PID {p.pid}: {e}")
 
         # Wait for processes to exit (max 45 seconds)
         logging.info("Waiting for server to shut down...")
@@ -471,14 +514,17 @@ def restart_server():
                 try:
                     logging.info(f"Force killing PID: {p.pid}")
                     p.kill()
-                except (psutil.NoSuchProcess, psutil.AccessDenied):
-                    pass
+                except (psutil.NoSuchProcess, psutil.AccessDenied) as e:
+                    logging.warning(f"Failed to kill PID {p.pid}: {e}")
 
             # Wait again
             gone, alive = psutil.wait_procs(alive, timeout=10)
             if alive:
+                pids_still_alive = [p.pid for p in alive]
+                logging.error(f"Processes still alive after force kill: {pids_still_alive}")
                 return jsonify({
                     'error': f'{len(alive)} server processes could not be terminated',
+                    'pids': pids_still_alive,
                     'note': 'You may need to restart the container'
                 }), 500
 
@@ -499,11 +545,14 @@ def restart_server():
             start_new_session=True
         )
 
+        # Get PIDs for notification
+        terminated_pids = [p.pid for p in all_server_procs if p.is_running() == False] if gone else []
+
         # Send Discord notification
         server_name = os.getenv('SERVER_NAME', 'Vein Server')
         discord_sent = send_discord_notification(
             f"🔄 **{server_name}** has been restarted via API.\n\n"
-            f"**Previous PID:** {pid}\n"
+            f"**Terminated processes:** {len(gone)}\n"
             f"**Timestamp:** {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC",
             title="Server Restarted",
             color=3447003,  # Blue
@@ -513,7 +562,7 @@ def restart_server():
         return jsonify({
             'success': True,
             'message': 'Server restart initiated',
-            'previous_pid': pid,
+            'processes_terminated': len(gone),
             'discord_notification_sent': discord_sent,
             'note': 'Server is restarting with flags from environment variables. Custom CMD flags from container start are not preserved.',
             'recommendation': 'Set all server flags via environment variables (GAME_PORT, SERVER_MULTIHOME_IP, etc.) for reliable restarts'
