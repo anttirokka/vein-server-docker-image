@@ -19,20 +19,20 @@ def ensure_directory(path):
 
 def send_discord_notification(message, title="Vein Server Notification", color=3066993):
     """Send a notification to Discord webhook.
-    
+
     Args:
         message: The message content
         title: The embed title
         color: Discord embed color (default: green 3066993)
-    
+
     Returns:
         bool: True if notification was sent successfully
     """
     webhook_url = os.getenv('DISCORD_WEBHOOK_URL', '')
-    
+
     if not webhook_url:
         return False
-    
+
     try:
         embed = {
             "title": title,
@@ -40,24 +40,24 @@ def send_discord_notification(message, title="Vein Server Notification", color=3
             "color": color,
             "timestamp": datetime.utcnow().isoformat()
         }
-        
+
         payload = {
             "embeds": [embed]
         }
-        
+
         response = requests.post(
             webhook_url,
             json=payload,
             timeout=5
         )
-        
+
         if response.status_code in (200, 204):
             print("Discord notification sent successfully")
             return True
         else:
             print(f"Discord notification failed: {response.status_code}")
             return False
-            
+
     except Exception as e:
         print(f"Failed to send Discord notification: {e}")
         return False
@@ -310,7 +310,7 @@ def start_server(server_path, extra_args):
     max_players = os.getenv('MAX_PLAYERS', '16')
     game_port = os.getenv('GAME_PORT', '7777')
     query_port = os.getenv('GAME_SERVER_QUERY_PORT', '27015')
-    
+
     send_discord_notification(
         f"🚀 **{server_name}** is starting up!\n\n"
         f"**Max Players:** {max_players}\n"
