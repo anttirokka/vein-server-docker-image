@@ -455,21 +455,21 @@ def restart_server():
         # Restart the server by directly starting VeinServer
         print("Starting new server process...")
         server_path = os.getenv('SERVER_PATH', '/home/steam/vein-server')
-        
+
         # Build server arguments from environment variables (same as entrypoint.py)
         server_args = ['-log']
-        
+
         if os.getenv('GAME_PORT'):
             server_args.append(f'-Port={os.getenv("GAME_PORT")}')
         if os.getenv('GAME_SERVER_QUERY_PORT'):
             server_args.append(f'-QueryPort={os.getenv("GAME_SERVER_QUERY_PORT")}')
         if os.getenv('SERVER_MULTIHOME_IP'):
             server_args.append(f'-multihome={os.getenv("SERVER_MULTIHOME_IP")}')
-        
+
         # Find the server executable
         vein_server_sh = os.path.join(server_path, 'VeinServer.sh')
         vein_server = os.path.join(server_path, 'VeinServer')
-        
+
         if os.path.isfile(vein_server_sh):
             restart_cmd = [vein_server_sh] + server_args
         elif os.path.isfile(vein_server):

@@ -97,6 +97,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
     python3-pip \
     procps \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies for server API
@@ -115,6 +116,15 @@ COPY --chown=steam:steam server-api.py /server-api.py
 RUN chmod +x /entrypoint.py && chmod +x /http-forwarder.py && chmod +x /server-api.py
 
 WORKDIR ${SERVER_PATH}
+
+# Healthcheck - check if the HTTP API is responding
+# The server takes a long time to start (can be 5+ minutes), so we use:
+# - start-period: 10 minutes grace period before healthchecks start counting failures
+# - interval: check every 30 seconds after start period
+# - timeout: allow 10 seconds for response
+# - retries: 3 consecutive failures before marking unhealthy
+HEALTHCHECK --start-period=600s --interval=30s --timeout=10s --retries=3 \
+    CMD curl -f http://localhost:9080/status || exit 1
 
 # Default command passed to entrypoint.sh (can be overridden)
 CMD []
