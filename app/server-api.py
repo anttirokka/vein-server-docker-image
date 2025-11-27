@@ -13,10 +13,20 @@ import time
 import signal
 import subprocess
 import requests
+import sys
+import logging
 from pathlib import Path
 from datetime import datetime
 
 app = Flask(__name__)
+
+# Configure logging to stdout for Docker logs
+logging.basicConfig(
+    level=logging.INFO,
+    format='[%(asctime)s] %(levelname)s in %(module)s: %(message)s',
+    handlers=[logging.StreamHandler(sys.stdout)]
+)
+
 # Enable CORS with explicit configuration
 CORS(app, resources={
     r"/*": {
@@ -135,7 +145,7 @@ def send_discord_notification(message, title="Vein Server Notification", color=3
         response = requests.post(webhook_url, json=payload, timeout=5)
         return response.status_code in [200, 204]
     except Exception as e:
-        print(f"Failed to send Discord notification: {e}")
+        logging.error(f"Failed to send Discord notification: {e}")
         return False
 
 
@@ -401,16 +411,16 @@ def restart_server():
                     server_args = cmdline[i + 1:]
                     break
 
-        print(f"Sending SIGTERM to server process (PID: {pid})")
-        print(f"Original server args: {server_args}")
+        logging.info(f"Sending SIGTERM to server process (PID: {pid})")
+        logging.info(f"Original server args: {server_args}")
 
         # Terminate all child processes first
         try:
             children = proc.children(recursive=True)
-            print(f"Found {len(children)} child processes")
+            logging.info(f"Found {len(children)} child processes")
             for child in children:
                 try:
-                    print(f"Terminating child process PID: {child.pid}")
+                    logging.info(f"Terminating child process PID: {child.pid}")
                     child.terminate()
                 except (psutil.NoSuchProcess, psutil.AccessDenied):
                     pass
@@ -421,13 +431,13 @@ def restart_server():
         proc.terminate()
 
         # Wait for process to exit (max 45 seconds)
-        print("Waiting for server to shut down...")
+        logging.info("Waiting for server to shut down...")
         try:
             proc.wait(timeout=45)
-            print("Server shut down gracefully")
+            logging.info("Server shut down gracefully")
         except psutil.TimeoutExpired:
             # Force kill children first if graceful shutdown failed
-            print("Server didn't shut down gracefully, force killing children...")
+            logging.info("Server didn't shut down gracefully, force killing children...")
             try:
                 children = proc.children(recursive=True)
                 for child in children:
@@ -439,7 +449,7 @@ def restart_server():
                 pass
 
             # Force kill main process
-            print("Force killing main process...")
+            logging.info("Force killing main process...")
             proc.kill()
             try:
                 proc.wait(timeout=10)
@@ -452,38 +462,15 @@ def restart_server():
         # Wait a moment for cleanup
         time.sleep(2)
 
-        # Restart the server by directly starting VeinServer
-        print("Starting new server process...")
-        server_path = os.getenv('SERVER_PATH', '/home/steam/vein-server')
+        # Restart the server using entrypoint.py
+        logging.info("Starting new server process via entrypoint.py...")
 
-        # Build server arguments from environment variables (same as entrypoint.py)
-        server_args = ['-log']
-
-        if os.getenv('GAME_PORT'):
-            server_args.append(f'-Port={os.getenv("GAME_PORT")}')
-        if os.getenv('GAME_SERVER_QUERY_PORT'):
-            server_args.append(f'-QueryPort={os.getenv("GAME_SERVER_QUERY_PORT")}')
-        if os.getenv('SERVER_MULTIHOME_IP'):
-            server_args.append(f'-multihome={os.getenv("SERVER_MULTIHOME_IP")}')
-
-        # Find the server executable
-        vein_server_sh = os.path.join(server_path, 'VeinServer.sh')
-        vein_server = os.path.join(server_path, 'VeinServer')
-
-        if os.path.isfile(vein_server_sh):
-            restart_cmd = [vein_server_sh] + server_args
-        elif os.path.isfile(vein_server):
-            restart_cmd = [vein_server] + server_args
-        else:
-            return jsonify({
-                'error': 'VeinServer executable not found',
-                'note': 'Cannot restart server - executable missing'
-            }), 500
+        # Call entrypoint.py directly
+        restart_cmd = ['python3', '/entrypoint.py']
 
         # Start the new server process in the background
         subprocess.Popen(
             restart_cmd,
-            cwd=server_path,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             start_new_session=True
@@ -545,151 +532,19 @@ def get_server_status():
         })
 
 
-@app.route('/api/server/update', methods=['POST'])
-@require_api_key
-def update_server():
-    """Update the Vein server by restarting it.
-
-    The entrypoint.py automatically runs SteamCMD app_update on every start,
-    so restarting the server will check for and install any available updates.
-
-    This can be done with server running - it will be stopped, updated, and restarted.
-    """
-    proc = get_server_process()
-
-    try:
-        print(f"Initiating server update for AppID {APPID}...")
-
-        # If server is running, stop it first
-        if proc:
-            pid = proc.pid
-            print(f"Stopping server (PID: {pid}) for update...")
-
-            proc.terminate()
-            try:
-                proc.wait(timeout=30)
-                print("Server stopped gracefully")
-            except psutil.TimeoutExpired:
-                print("Force killing server...")
-                proc.kill()
-                try:
-                    proc.wait(timeout=5)
-                except psutil.TimeoutExpired:
-                    return jsonify({
-                        'error': 'Could not stop server for update',
-                        'note': 'Server process could not be terminated'
-                    }), 500
-
-            time.sleep(2)
-        else:
-            print("Server is not running, will start fresh after update")
-
-        # Start the server via entrypoint, which will run SteamCMD update
-        print("Starting entrypoint (will update and start server)...")
-        server_path = os.getenv('SERVER_PATH', '/home/steam/vein-server')
-
-        restart_cmd = ['/usr/bin/python3', '/entrypoint.py']
-
-        subprocess.Popen(
-            restart_cmd,
-            cwd=server_path,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True
-        )
-
-        # Send Discord notification
-        server_name = os.getenv('SERVER_NAME', 'Vein Server')
-        notification_msg = f"⬆️ **{server_name}** is being updated via API.\n\n"
-        notification_msg += f"**App ID:** {APPID}\n"
-        notification_msg += f"**Timestamp:** {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC\n\n"
-        notification_msg += "The server is restarting and will check for updates automatically."
-
-        discord_sent = send_discord_notification(
-            notification_msg,
-            title="Server Update Initiated",
-            color=3447003,  # Blue
-            use_admin=True
-        )
-
-        return jsonify({
-            'success': True,
-            'message': 'Server update initiated',
-            'appid': APPID,
-            'discord_notification_sent': discord_sent,
-            'note': 'The entrypoint will run SteamCMD app_update and restart the server. This may take a few minutes.',
-            'how_it_works': 'entrypoint.py automatically runs install_or_update_server() on every start'
-        })
-
-    except Exception as e:
-        return jsonify({
-            'error': f'Failed to update server: {str(e)}'
-        }), 500
-
-
-@app.route('/api/server/update-info', methods=['GET'])
-def get_update_info():
-    """Get information about server installation and potential updates.
-
-    Note: SteamCMD cannot detect available updates without downloading them.
-    This endpoint provides installation metadata instead.
-    """
-    try:
-        # Check for appmanifest file which contains installation info
-        manifest_pattern = f'appmanifest_{APPID}.acf'
-        steamapps_dir = os.path.join(SERVER_PATH, '..', 'steamapps')
-        manifest_path = os.path.join(steamapps_dir, manifest_pattern)
-
-        install_info = {
-            'appid': APPID,
-            'server_path': SERVER_PATH,
-            'installed': os.path.exists(os.path.join(SERVER_PATH, 'VeinServer.sh')) or
-                        os.path.exists(os.path.join(SERVER_PATH, 'VeinServer')),
-        }
-
-        # Try to read manifest file for build ID
-        if os.path.exists(manifest_path):
-            try:
-                with open(manifest_path, 'r') as f:
-                    content = f.read()
-                    # Parse ACF format (simple key-value)
-                    for line in content.split('\n'):
-                        if '"buildid"' in line.lower():
-                            build_id = line.split('"')[-2] if '"' in line else None
-                            if build_id:
-                                install_info['build_id'] = build_id
-                        elif '"timeupdated"' in line.lower():
-                            timestamp = line.split('"')[-2] if '"' in line else None
-                            if timestamp:
-                                install_info['last_updated'] = datetime.fromtimestamp(int(timestamp)).isoformat()
-            except Exception as e:
-                install_info['manifest_error'] = str(e)
-
-        return jsonify({
-            'install_info': install_info,
-            'note': 'SteamCMD cannot check for updates without downloading. Use POST /api/server/update to update.',
-            'limitations': 'Steam API does not provide a reliable way to check for available updates before downloading'
-        })
-
-    except Exception as e:
-        return jsonify({
-            'error': f'Failed to get update info: {str(e)}'
-        }), 500
-
-
 if __name__ == '__main__':
     if not SERVER_API_ENABLED:
-        print("Server API is disabled (SERVER_API_ENABLED=false). Exiting.")
+        logging.info("Server API is disabled (SERVER_API_ENABLED=false). Exiting.")
         import sys
         sys.exit(0)
 
-    print(f"Starting Server API on port {SERVER_API_PORT}")
-    print(f"Config path: {CONFIG_PATH}")
-    print(f"Server path: {SERVER_PATH}")
+    logging.info(f"Starting Server API on port {SERVER_API_PORT}")
+    logging.info(f"Config path: {CONFIG_PATH}")
+    logging.info(f"Server path: {SERVER_PATH}")
 
     if API_KEY:
-        print("API Key authentication enabled for protected operations")
+        logging.info("API Key authentication enabled for protected operations")
     else:
-        print("Warning: No API key set. Protected operations are unprotected!")
+        logging.warning("No API key set. Protected operations are unprotected!")
 
     app.run(host='0.0.0.0', port=SERVER_API_PORT, debug=False)

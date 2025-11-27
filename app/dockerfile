@@ -121,8 +121,8 @@ WORKDIR ${SERVER_PATH}
 # The server takes a long time to start (can be 5+ minutes), so we use:
 # - start-period: 10 minutes grace period before healthchecks start counting failures
 # - interval: check every 30 seconds after start period
-# - timeout: allow 10 seconds for response
-# - retries: 3 consecutive failures before marking unhealthy
+# - timeout: 10 seconds for response
+# - retries: 3 consecutive failures before marking unhealthy and restarting container
 HEALTHCHECK --start-period=600s --interval=30s --timeout=10s --retries=3 \
     CMD curl -f http://localhost:9080/status || exit 1
 
