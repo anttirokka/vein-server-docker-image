@@ -21,7 +21,7 @@ logging.basicConfig(
 # Configuration from environment variables
 SERVER_PATH = os.getenv('SERVER_PATH', '/home/steam/vein-server')
 SAVE_FILE = os.path.join(SERVER_PATH, 'Vein/Saved/SaveGames/Server.vns')
-BACKUP_DIR = os.path.join(SERVER_PATH, 'Vein/Saved/Backups')
+BACKUP_DIR = os.getenv('BACKUP_DIR', os.path.join(SERVER_PATH, 'Vein/Saved/Backups'))
 MAX_BACKUPS = int(os.getenv('BACKUP_RETENTION', '14'))  # Keep 14 backups by default
 DISCORD_WEBHOOK_URL = os.getenv('DISCORD_WEBHOOK_URL', '')
 

@@ -118,14 +118,14 @@ COPY --chown=steam:steam backup.py /backup.py
 COPY --chown=root:root backup-cron.sh /backup-cron.sh
 RUN chmod +x /entrypoint.py && chmod +x /http-forwarder.py && chmod +x /server-api.py && chmod +x /backup.py && chmod +x /backup-cron.sh
 
-# Environment variable for backup retention (days)
+# Backup configuration environment variables
+ENV BACKUP_ENABLED=true
 ENV BACKUP_RETENTION=14
 ENV BACKUP_SCHEDULE="0 3 * * *"
+ENV BACKUP_DIR=""
 
-# Setup cron job for backups (default: 3 AM daily)
-RUN echo "0 3 * * * root /backup-cron.sh >> /var/log/vein-backup.log 2>&1" > /etc/cron.d/vein-backup && \
-    chmod 0644 /etc/cron.d/vein-backup && \
-    touch /var/log/vein-backup.log
+# Setup cron log file (schedule will be configured at runtime)
+RUN touch /var/log/vein-backup.log && chmod 666 /var/log/vein-backup.log
 
 WORKDIR ${SERVER_PATH}
 
@@ -143,7 +143,7 @@ CMD []
 WORKDIR ${SERVER_PATH}
 
 # Set the entrypoint
-#ENTRYPOINT ["/entrypoint.sh"]
+#ENTRYPOINT [/entrypoint.sh]
 # Replace entrypoint with a small runtime wrapper that fixes ownership on mounted volumes
-# Start cron, server-api, http-forwarder in background, then run main entrypoint
-ENTRYPOINT ["bash", "-lc", "chown -R steam:steam ${SERVER_PATH} ${SERVER_PATH}/Vein/Saved ${SERVER_PATH}/Vein/Saved/Config 2>/dev/null || true; cron && python3 /server-api.py & python3 /http-forwarder.py & exec python3 /entrypoint.py"]
+# Setup cron schedule dynamically, start cron, server-api, http-forwarder in background, then run main entrypoint
+ENTRYPOINT ["bash", "-lc", "chown -R steam:steam ${SERVER_PATH} ${SERVER_PATH}/Vein/Saved ${SERVER_PATH}/Vein/Saved/Config 2>/dev/null || true; if [ \"${BACKUP_ENABLED}\" = \"true\" ]; then echo \"${BACKUP_SCHEDULE} root /backup-cron.sh >> /var/log/vein-backup.log 2>&1\" > /etc/cron.d/vein-backup && chmod 0644 /etc/cron.d/vein-backup && echo \"Backup scheduled: ${BACKUP_SCHEDULE}\"; fi; cron && python3 /server-api.py & python3 /http-forwarder.py & exec python3 /entrypoint.py"]
