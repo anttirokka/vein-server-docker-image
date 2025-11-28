@@ -255,7 +255,19 @@ def update_game_ini(config_path):
     print(f"{game_ini_path} updated.")
 
 def update_engine_ini(config_path):
-    """Update Engine.ini with environment variables."""
+    """Update Engine.ini with environment variables.
+    
+    Only updates Engine.ini if CVAR_ environment variables are present.
+    Port is passed as command-line argument, not written to Engine.ini.
+    This prevents overwriting game-generated settings.
+    """
+    # Check if there are any CVAR_ environment variables
+    cvar_settings = {key: value for key, value in os.environ.items() if key.startswith('CVAR_')}
+    
+    if not cvar_settings:
+        print("No CVAR_ environment variables found, skipping Engine.ini update.")
+        return
+    
     engine_ini_path = os.path.join(config_path, 'Engine.ini')
 
     config = configparser.RawConfigParser(strict=False)  # Allow duplicate keys
@@ -269,19 +281,15 @@ def update_engine_ini(config_path):
             # Read the file manually to handle duplicates
             config = read_ini_with_duplicates(engine_ini_path)
 
-    print(f"Updating {engine_ini_path}...")
-
-    # [URL]
-    update_ini_value(config, 'URL', 'Port', os.getenv('GAME_PORT', '7777'))
+    print(f"Updating {engine_ini_path} with CVAR settings...")
 
     # [ConsoleVariables] - Handle CVAR_ prefixed environment variables
-    for key, value in os.environ.items():
-        if key.startswith('CVAR_'):
-            cvar_name = key[5:]  # Remove 'CVAR_' prefix
-            update_ini_value(config, 'ConsoleVariables', cvar_name, value)
+    for key, value in cvar_settings.items():
+        cvar_name = key[5:]  # Remove 'CVAR_' prefix
+        update_ini_value(config, 'ConsoleVariables', cvar_name, value)
 
     write_ini_file(config, engine_ini_path)
-    print(f"{engine_ini_path} updated.")
+    print(f"{engine_ini_path} updated with {len(cvar_settings)} CVAR settings.")
 
 def setup_directories(server_path, config_path):
     """Create and display directory information."""
