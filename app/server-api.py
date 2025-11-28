@@ -475,14 +475,14 @@ def list_backups():
     """List all available backups."""
     try:
         backup_dir = os.path.join(SERVER_PATH, 'Vein/Saved/Backups')
-        
+
         if not os.path.exists(backup_dir):
             return jsonify({
                 'backups': [],
                 'count': 0,
                 'backup_dir': backup_dir
             })
-        
+
         backups = []
         for backup_file in sorted(Path(backup_dir).glob('Server_*.vns'), key=lambda x: x.stat().st_mtime, reverse=True):
             stat = backup_file.stat()
@@ -492,7 +492,7 @@ def list_backups():
                 'created': datetime.fromtimestamp(stat.st_mtime).isoformat(),
                 'created_formatted': datetime.fromtimestamp(stat.st_mtime).strftime('%Y-%m-%d %H:%M:%S')
             })
-        
+
         return jsonify({
             'backups': backups,
             'count': len(backups),
@@ -509,7 +509,7 @@ def create_backup():
     """Manually trigger a backup."""
     try:
         logging.info("Manual backup triggered via API")
-        
+
         # Run backup script
         result = subprocess.run(
             ['python3', '/backup.py'],
@@ -517,7 +517,7 @@ def create_backup():
             text=True,
             timeout=60
         )
-        
+
         if result.returncode == 0:
             return jsonify({
                 'success': True,

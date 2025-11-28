@@ -37,7 +37,7 @@ def send_discord_notification(message, title="Vein Server Notification", color=3
     try:
         print(f"Sending Discord notification: {title}")
         print(f"Webhook URL (first 50 chars): {webhook_url[:50]}...")
-        
+
         embed = {
             "title": title,
             "description": message,
@@ -78,15 +78,15 @@ def read_ini_with_duplicates(filepath):
     """Read INI file that may contain duplicate keys (common in Unreal Engine configs)."""
     config = configparser.RawConfigParser(strict=False)
     config.optionxform = str
-    
+
     # Read file manually and skip duplicate keys
     current_section = None
     seen_keys = {}
-    
+
     with open(filepath, 'r') as f:
         for line in f:
             line = line.strip()
-            
+
             # Section header
             if line.startswith('[') and line.endswith(']'):
                 current_section = line[1:-1]
@@ -94,22 +94,22 @@ def read_ini_with_duplicates(filepath):
                     config.add_section(current_section)
                 seen_keys[current_section] = set()
                 continue
-            
+
             # Key-value pair
             if '=' in line and current_section:
                 key, value = line.split('=', 1)
                 key = key.strip()
-                
+
                 # Handle +Key syntax (array entries)
                 if key.startswith('+'):
                     # For array entries, we keep them but don't track as duplicates
                     continue
-                
+
                 # Only add if we haven't seen this key in this section
                 if key not in seen_keys[current_section]:
                     config.set(current_section, key, value.strip())
                     seen_keys[current_section].add(key)
-    
+
     return config
 
 def update_ini_array(config, section, key, csv_values):
@@ -191,7 +191,7 @@ def update_game_ini(config_path):
     # ServerName should NOT have quotes according to documentation
     update_ini_value(config, '/Script/Vein.VeinGameSession', 'ServerName',
                      os.getenv('SERVER_NAME', 'Vein Docker Server'))
-    
+
     # HTTP Port - add HTTPPort
     http_port = os.getenv('HTTP_PORT')
     if http_port:
@@ -201,16 +201,16 @@ def update_game_ini(config_path):
     server_password = os.getenv('SERVER_PASSWORD')
     if server_password:
         update_ini_value(config, '/Script/Vein.VeinGameSession', 'Password', server_password)
-    
+
     # Optional settings (only add if explicitly set)
     bind_addr = os.getenv('SERVER_BIND_ADDR')
     if bind_addr:
         update_ini_value(config, '/Script/Vein.VeinGameSession', 'BindAddr', bind_addr)
-    
+
     heartbeat = os.getenv('HEARTBEAT_INTERVAL')
     if heartbeat:
         update_ini_value(config, '/Script/Vein.VeinGameSession', 'HeartbeatInterval', heartbeat)
-    
+
     # bPublic (only add if explicitly set)
     server_public = os.getenv('SERVER_PUBLIC')
     if server_public:
@@ -273,10 +273,6 @@ def update_engine_ini(config_path):
 
     # [URL]
     update_ini_value(config, 'URL', 'Port', os.getenv('GAME_PORT', '7777'))
-
-    # [Core.Log]
-    update_ini_value(config, 'Core.Log', 'LogOnlineSession', 'Warning')
-    update_ini_value(config, 'Core.Log', 'LogOnline', 'Warning')
 
     # [ConsoleVariables] - Handle CVAR_ prefixed environment variables
     for key, value in os.environ.items():

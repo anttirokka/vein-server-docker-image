@@ -32,7 +32,7 @@ def send_discord_notification(message, title="Vein Server Backup", color=3066993
 
     try:
         import requests
-        
+
         embed = {
             "title": title,
             "description": message,
@@ -166,10 +166,10 @@ def main():
     if backup_save_file():
         # Cleanup old backups
         cleanup_old_backups()
-        
+
         # List current backups
         list_backups()
-        
+
         logging.info("Backup process completed successfully")
         return 0
     else:
