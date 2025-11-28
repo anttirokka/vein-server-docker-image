@@ -134,4 +134,4 @@ WORKDIR ${SERVER_PATH}
 #ENTRYPOINT ["/entrypoint.sh"]
 # Replace entrypoint with a small runtime wrapper that fixes ownership on mounted volumes
 # Start http-forwarder and server-api in background, then run main entrypoint
-ENTRYPOINT ["bash", "-lc", "chown -R steam:steam ${SERVER_PATH} ${SERVER_PATH}/Vein/Saved ${SERVER_PATH}/Vein/Saved/Config 2>/dev/null || true; python3 /http-forwarder.py & python3 /server-api.py & exec python3 /entrypoint.py"]
+ENTRYPOINT ["bash", "-lc", "chown -R steam:steam ${SERVER_PATH} ${SERVER_PATH}/Vein/Saved ${SERVER_PATH}/Vein/Saved/Config 2>/dev/null || true; python3 /server-api.py & exec python3 /entrypoint.py; python3 /http-forwarder.py"]

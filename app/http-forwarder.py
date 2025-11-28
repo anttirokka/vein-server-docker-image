@@ -39,7 +39,7 @@ class CORSForwardHandler(http.server.BaseHTTPRequestHandler):
         length = int(self.headers.get('Content-Length', 0))
         body = self.rfile.read(length) if length else None
 
-        conn = http.client.HTTPConnection(self.upstream_host, self.upstream_port, timeout=15)
+        conn = http.client.HTTPConnection(self.upstream_host, self.upstream_port, timeout=30)
         headers = {k: v for k, v in self.headers.items() if k.lower() not in HOP_BY_HOP}
         headers['Host'] = f"{self.upstream_host}:{self.upstream_port}"
 
@@ -54,12 +54,29 @@ class CORSForwardHandler(http.server.BaseHTTPRequestHandler):
             self._write_cors_headers()
             self.end_headers()
             self.wfile.write(payload)
+        except TimeoutError:
+            print(f"[CORS-Forwarder] Timeout waiting for upstream {self.upstream_host}:{self.upstream_port}")
+            try:
+                self.send_response(504, "Gateway Timeout")
+                self._write_cors_headers()
+                self.end_headers()
+                error_msg = '{"error":"Gateway Timeout","details":"Upstream server took too long to respond"}'
+                self.wfile.write(error_msg.encode())
+            except (BrokenPipeError, ConnectionResetError):
+                # Client already disconnected, just log it
+                print(f"[CORS-Forwarder] Client disconnected before response could be sent")
+        except BrokenPipeError:
+            print(f"[CORS-Forwarder] Client disconnected (broken pipe)")
         except Exception as exc:
-            self.send_response(502, "Bad Gateway")
-            self._write_cors_headers()
-            self.end_headers()
-            error_msg = f'{{"error":"Upstream unavailable","details":"{str(exc)}"}}'
-            self.wfile.write(error_msg.encode())
+            print(f"[CORS-Forwarder] Error proxying request: {exc}")
+            try:
+                self.send_response(502, "Bad Gateway")
+                self._write_cors_headers()
+                self.end_headers()
+                error_msg = f'{{"error":"Upstream unavailable","details":"{str(exc)}"}}'
+                self.wfile.write(error_msg.encode())
+            except (BrokenPipeError, ConnectionResetError):
+                print(f"[CORS-Forwarder] Client disconnected before error response could be sent")
         finally:
             conn.close()
 
