@@ -188,26 +188,35 @@ def update_game_ini(config_path):
                      os.getenv('MAX_PLAYERS', '16'))
 
     # [/Script/Vein.VeinGameSession]
+    # ServerName should NOT have quotes according to documentation
     update_ini_value(config, '/Script/Vein.VeinGameSession', 'ServerName',
-                     f'"{os.getenv("SERVER_NAME", "Vein Docker Server")}"')
-    update_ini_value(config, '/Script/Vein.VeinGameSession', 'BindAddr',
-                     os.getenv('SERVER_BIND_ADDR', '0.0.0.0'))
-    update_ini_value(config, '/Script/Vein.VeinGameSession', 'HeartbeatInterval',
-                     os.getenv('HEARTBEAT_INTERVAL', '5.0'))
-
+                     os.getenv('SERVER_NAME', 'Vein Docker Server'))
+    
     # HTTP Port - add HTTPPort
     http_port = os.getenv('HTTP_PORT')
     if http_port:
         update_ini_value(config, '/Script/Vein.VeinGameSession', 'HTTPPort', http_port)
 
-    # Public setting
-    is_public = os.getenv('SERVER_PUBLIC', 'True').lower() != 'false'
-    update_ini_value(config, '/Script/Vein.VeinGameSession', 'bPublic',
-                     'True' if is_public else 'False')
-
+    # Password should NOT have quotes
     server_password = os.getenv('SERVER_PASSWORD')
     if server_password:
         update_ini_value(config, '/Script/Vein.VeinGameSession', 'Password', server_password)
+    
+    # Optional settings (only add if explicitly set)
+    bind_addr = os.getenv('SERVER_BIND_ADDR')
+    if bind_addr:
+        update_ini_value(config, '/Script/Vein.VeinGameSession', 'BindAddr', bind_addr)
+    
+    heartbeat = os.getenv('HEARTBEAT_INTERVAL')
+    if heartbeat:
+        update_ini_value(config, '/Script/Vein.VeinGameSession', 'HeartbeatInterval', heartbeat)
+    
+    # bPublic (only add if explicitly set)
+    server_public = os.getenv('SERVER_PUBLIC')
+    if server_public:
+        is_public = server_public.lower() != 'false'
+        update_ini_value(config, '/Script/Vein.VeinGameSession', 'bPublic',
+                         'True' if is_public else 'False')
 
     # Steam IDs - always update if provided
     super_admin_ids = os.getenv('SUPER_ADMIN_STEAM_IDS')
