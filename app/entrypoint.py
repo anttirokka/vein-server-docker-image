@@ -74,6 +74,44 @@ def update_ini_value(config, section, key, value):
         config.add_section(section)
     config.set(section, key, str(value))
 
+def read_ini_with_duplicates(filepath):
+    """Read INI file that may contain duplicate keys (common in Unreal Engine configs)."""
+    config = configparser.RawConfigParser(strict=False)
+    config.optionxform = str
+    
+    # Read file manually and skip duplicate keys
+    current_section = None
+    seen_keys = {}
+    
+    with open(filepath, 'r') as f:
+        for line in f:
+            line = line.strip()
+            
+            # Section header
+            if line.startswith('[') and line.endswith(']'):
+                current_section = line[1:-1]
+                if not config.has_section(current_section):
+                    config.add_section(current_section)
+                seen_keys[current_section] = set()
+                continue
+            
+            # Key-value pair
+            if '=' in line and current_section:
+                key, value = line.split('=', 1)
+                key = key.strip()
+                
+                # Handle +Key syntax (array entries)
+                if key.startswith('+'):
+                    # For array entries, we keep them but don't track as duplicates
+                    continue
+                
+                # Only add if we haven't seen this key in this section
+                if key not in seen_keys[current_section]:
+                    config.set(current_section, key, value.strip())
+                    seen_keys[current_section].add(key)
+    
+    return config
+
 def update_ini_array(config, section, key, csv_values):
     """Handle array-style INI entries (like Steam IDs with + prefix)."""
     if not csv_values:
@@ -133,11 +171,15 @@ def update_game_ini(config_path):
     game_ini_path = os.path.join(config_path, 'Game.ini')
 
     # Use RawConfigParser to preserve case and special characters
-    config = configparser.RawConfigParser()
+    config = configparser.RawConfigParser(strict=False)  # Allow duplicate keys
     config.optionxform = str  # Preserve case
 
     if os.path.exists(game_ini_path):
-        config.read(game_ini_path)
+        try:
+            config.read(game_ini_path)
+        except configparser.DuplicateOptionError as e:
+            print(f"Warning: Duplicate key found in Game.ini: {e}")
+            config = read_ini_with_duplicates(game_ini_path)
 
     print(f"Updating {game_ini_path}...")
 
@@ -207,11 +249,16 @@ def update_engine_ini(config_path):
     """Update Engine.ini with environment variables."""
     engine_ini_path = os.path.join(config_path, 'Engine.ini')
 
-    config = configparser.RawConfigParser()
+    config = configparser.RawConfigParser(strict=False)  # Allow duplicate keys
     config.optionxform = str  # Preserve case
 
     if os.path.exists(engine_ini_path):
-        config.read(engine_ini_path)
+        try:
+            config.read(engine_ini_path)
+        except configparser.DuplicateOptionError as e:
+            print(f"Warning: Duplicate key found in Engine.ini: {e}")
+            # Read the file manually to handle duplicates
+            config = read_ini_with_duplicates(engine_ini_path)
 
     print(f"Updating {engine_ini_path}...")
 
