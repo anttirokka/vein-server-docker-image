@@ -444,139 +444,6 @@ def format_uptime(seconds):
     return " ".join(parts)
 
 
-@app.route('/api/server/restart', methods=['POST'])
-@require_api_key
-def restart_server():
-    """Restart the Vein server process."""
-    # Get all VeinServer related processes
-    all_server_procs = get_all_server_processes()
-
-    if not all_server_procs:
-        return jsonify({
-            'error': 'Server process not found',
-            'server_running': False
-        }), 404
-
-    try:
-        logging.info(f"Found {len(all_server_procs)} VeinServer processes to terminate")
-
-        # Log all processes we're about to kill
-        for proc in all_server_procs:
-            try:
-                cmdline = ' '.join(proc.cmdline())
-                logging.info(f"Will terminate PID {proc.pid}: {cmdline}")
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
-                pass
-
-        # Collect all processes including their children
-        processes_to_kill = []
-        for proc in all_server_procs:
-            try:
-                processes_to_kill.append(proc)
-                children = proc.children(recursive=True)
-                if children:
-                    logging.info(f"Process {proc.pid} has {len(children)} child processes")
-                    # Filter out Python processes from children to avoid killing the API
-                    for child in children:
-                        try:
-                            child_name = child.name()
-                            child_cmdline = ' '.join(child.cmdline())
-                            if child_name not in ['python', 'python3'] and '.py' not in child_cmdline:
-                                processes_to_kill.append(child)
-                            else:
-                                logging.info(f"Skipping Python process PID {child.pid}: {child_cmdline}")
-                        except (psutil.NoSuchProcess, psutil.AccessDenied):
-                            pass
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
-                pass
-
-        logging.info(f"Total processes to terminate: {len(processes_to_kill)}")
-
-        # Terminate all processes
-        for p in processes_to_kill:
-            try:
-                logging.info(f"Terminating process PID: {p.pid} ({p.name()})")
-                p.terminate()
-            except (psutil.NoSuchProcess, psutil.AccessDenied) as e:
-                logging.warning(f"Failed to terminate PID {p.pid}: {e}")
-
-        # Wait for processes to exit (max 45 seconds)
-        logging.info("Waiting for server to shut down...")
-        gone, alive = psutil.wait_procs(processes_to_kill, timeout=45)
-
-        if gone:
-            logging.info(f"Server shut down gracefully ({len(gone)} processes terminated)")
-
-        if alive:
-            # Force kill remaining processes
-            logging.info(f"Force killing {len(alive)} remaining processes...")
-            for p in alive:
-                try:
-                    logging.info(f"Force killing PID: {p.pid}")
-                    p.kill()
-                except (psutil.NoSuchProcess, psutil.AccessDenied) as e:
-                    logging.warning(f"Failed to kill PID {p.pid}: {e}")
-
-            # Wait again
-            gone, alive = psutil.wait_procs(alive, timeout=10)
-            if alive:
-                pids_still_alive = [p.pid for p in alive]
-                logging.error(f"Processes still alive after force kill: {pids_still_alive}")
-                return jsonify({
-                    'error': f'{len(alive)} server processes could not be terminated',
-                    'pids': pids_still_alive,
-                    'note': 'You may need to restart the container'
-                }), 500
-
-        # Wait a moment for cleanup
-        time.sleep(2)
-
-        # Restart the server using entrypoint.py
-        logging.info("Starting new server process via entrypoint.py...")
-
-        # Call entrypoint.py directly
-        restart_cmd = ['python3', '/entrypoint.py']
-
-        # Start the new server process in the background
-        subprocess.Popen(
-            restart_cmd,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True
-        )
-
-        # Get PIDs for notification
-        terminated_pids = [p.pid for p in all_server_procs if p.is_running() == False] if gone else []
-
-        # Send Discord notification
-        server_name = os.getenv('SERVER_NAME', 'Vein Server')
-        discord_sent = send_discord_notification(
-            f"🔄 **{server_name}** has been restarted via API.\n\n"
-            f"**Terminated processes:** {len(gone)}\n"
-            f"**Timestamp:** {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC",
-            title="Server Restarted",
-            color=3447003,  # Blue
-            use_admin=True
-        )
-
-        return jsonify({
-            'success': True,
-            'message': 'Server restart initiated',
-            'processes_terminated': len(gone),
-            'discord_notification_sent': discord_sent,
-            'note': 'Server is restarting with flags from environment variables. Custom CMD flags from container start are not preserved.',
-            'recommendation': 'Set all server flags via environment variables (GAME_PORT, SERVER_MULTIHOME_IP, etc.) for reliable restarts'
-        })
-    except psutil.NoSuchProcess:
-        return jsonify({
-            'error': 'Server process disappeared during restart'
-        }), 500
-    except Exception as e:
-        return jsonify({
-            'error': f'Failed to restart server: {str(e)}'
-        }), 500
-
-
 @app.route('/api/server/status', methods=['GET'])
 def get_server_status():
     """Get current server status."""
@@ -601,6 +468,79 @@ def get_server_status():
             'server_running': False,
             'status': 'unknown'
         })
+
+
+@app.route('/api/backup/list', methods=['GET'])
+def list_backups():
+    """List all available backups."""
+    try:
+        backup_dir = os.path.join(SERVER_PATH, 'Vein/Saved/Backups')
+        
+        if not os.path.exists(backup_dir):
+            return jsonify({
+                'backups': [],
+                'count': 0,
+                'backup_dir': backup_dir
+            })
+        
+        backups = []
+        for backup_file in sorted(Path(backup_dir).glob('Server_*.vns'), key=lambda x: x.stat().st_mtime, reverse=True):
+            stat = backup_file.stat()
+            backups.append({
+                'filename': backup_file.name,
+                'size_mb': round(stat.st_size / (1024 * 1024), 2),
+                'created': datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                'created_formatted': datetime.fromtimestamp(stat.st_mtime).strftime('%Y-%m-%d %H:%M:%S')
+            })
+        
+        return jsonify({
+            'backups': backups,
+            'count': len(backups),
+            'backup_dir': backup_dir,
+            'retention_days': int(os.getenv('BACKUP_RETENTION', '14'))
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/backup/create', methods=['POST'])
+@require_api_key
+def create_backup():
+    """Manually trigger a backup."""
+    try:
+        logging.info("Manual backup triggered via API")
+        
+        # Run backup script
+        result = subprocess.run(
+            ['python3', '/backup.py'],
+            capture_output=True,
+            text=True,
+            timeout=60
+        )
+        
+        if result.returncode == 0:
+            return jsonify({
+                'success': True,
+                'message': 'Backup created successfully',
+                'output': result.stdout
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'message': 'Backup failed',
+                'error': result.stderr
+            }), 500
+    except subprocess.TimeoutExpired:
+        return jsonify({
+            'success': False,
+            'message': 'Backup timed out'
+        }), 500
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': 'Backup failed',
+            'error': str(e)
+        }), 500
 
 
 if __name__ == '__main__':
