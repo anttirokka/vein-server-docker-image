@@ -48,11 +48,6 @@ ENV HEARTBEAT_INTERVAL=5.0
 ENV SERVER_PASSWORD=""
 ENV HTTP_PORT=""
 
-# Server API settings
-ENV SERVER_API_ENABLED=false
-ENV SERVER_API_PORT=9081
-ENV SERVER_API_KEY=""
-
 # Game.ini - [OnlineSubsystemSteam]
 # UDP Query Port for Steam
 ENV GAME_SERVER_QUERY_PORT=27015
@@ -83,8 +78,6 @@ EXPOSE 7777/udp
 EXPOSE 27015/udp
 # HTTP port for query API (TCP) - forwarded from 9080 to localhost:8080
 EXPOSE 9080/tcp
-# Server API port
-EXPOSE 9081/tcp
 
 # Install gosu for safe privilege dropping at runtime
 # (replaced complex download+verify with simple apt install)
@@ -101,7 +94,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     cron \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python dependencies for server API
+# Install Python dependencies
 COPY --chown=root:root requirements.txt /tmp/requirements.txt
 RUN pip3 install --break-system-packages --no-cache-dir -r /tmp/requirements.txt && rm /tmp/requirements.txt
 
@@ -113,10 +106,9 @@ RUN mkdir -p ${SERVER_PATH} ${CONFIG_PATH} ${LOG_DIR} && \
 # Copy entrypoint script and make it executable (as root)
 COPY --chown=steam:steam entrypoint.py /entrypoint.py
 COPY --chown=steam:steam http-forwarder.py /http-forwarder.py
-COPY --chown=steam:steam server-api.py /server-api.py
 COPY --chown=steam:steam backup.py /backup.py
 COPY --chown=root:root backup-cron.sh /backup-cron.sh
-RUN chmod +x /entrypoint.py && chmod +x /http-forwarder.py && chmod +x /server-api.py && chmod +x /backup.py && chmod +x /backup-cron.sh
+RUN chmod +x /entrypoint.py && chmod +x /http-forwarder.py && chmod +x /backup.py && chmod +x /backup-cron.sh
 
 # Backup configuration environment variables
 ENV BACKUP_ENABLED=true
@@ -145,5 +137,5 @@ WORKDIR ${SERVER_PATH}
 # Set the entrypoint
 #ENTRYPOINT [/entrypoint.sh]
 # Replace entrypoint with a small runtime wrapper that fixes ownership on mounted volumes
-# Setup cron schedule dynamically, start cron, server-api, http-forwarder in background, then run main entrypoint
-ENTRYPOINT ["bash", "-lc", "chown -R steam:steam ${SERVER_PATH} ${SERVER_PATH}/Vein/Saved ${SERVER_PATH}/Vein/Saved/Config 2>/dev/null || true; if [ \"${BACKUP_ENABLED}\" = \"true\" ]; then echo \"${BACKUP_SCHEDULE} root /backup-cron.sh >> /var/log/vein-backup.log 2>&1\" > /etc/cron.d/vein-backup && chmod 0644 /etc/cron.d/vein-backup && echo \"Backup scheduled: ${BACKUP_SCHEDULE}\"; fi; cron && python3 /server-api.py & python3 /http-forwarder.py & exec python3 /entrypoint.py"]
+# Setup cron schedule dynamically, start cron, http-forwarder in background, then run main entrypoint
+ENTRYPOINT ["bash", "-lc", "chown -R steam:steam ${SERVER_PATH} ${SERVER_PATH}/Vein/Saved ${SERVER_PATH}/Vein/Saved/Config 2>/dev/null || true; if [ \"${BACKUP_ENABLED}\" = \"true\" ]; then echo \"${BACKUP_SCHEDULE} root /backup-cron.sh >> /var/log/vein-backup.log 2>&1\" > /etc/cron.d/vein-backup && chmod 0644 /etc/cron.d/vein-backup && echo \"Backup scheduled: ${BACKUP_SCHEDULE}\"; fi; cron && python3 /http-forwarder.py & exec python3 /entrypoint.py"]

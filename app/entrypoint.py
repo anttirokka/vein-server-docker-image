@@ -256,18 +256,18 @@ def update_game_ini(config_path):
 
 def update_engine_ini(config_path):
     """Update Engine.ini with environment variables.
-    
+
     Only updates Engine.ini if CVAR_ environment variables are present.
     Port is passed as command-line argument, not written to Engine.ini.
     This prevents overwriting game-generated settings.
     """
     # Check if there are any CVAR_ environment variables
     cvar_settings = {key: value for key, value in os.environ.items() if key.startswith('CVAR_')}
-    
+
     if not cvar_settings:
         print("No CVAR_ environment variables found, skipping Engine.ini update.")
         return
-    
+
     engine_ini_path = os.path.join(config_path, 'Engine.ini')
 
     config = configparser.RawConfigParser(strict=False)  # Allow duplicate keys
@@ -380,8 +380,6 @@ def start_server(server_path, extra_args):
     send_discord_notification(
         f"🚀 **{server_name}** is starting up!\n\n"
         f"**Max Players:** {max_players}\n"
-        f"**Game Port:** {game_port}\n"
-        f"**Query Port:** {query_port}\n"
         f"**Timestamp:** {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC",
         title="Server Starting",
         color=3066993  # Green

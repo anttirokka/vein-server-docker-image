@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-HTTP forwarder with CORS support for Vein Server API.
+HTTP forwarder with CORS support for Vein game server's HTTP API.
 Waits for the game server to start, then forwards traffic with CORS headers.
 """
 
