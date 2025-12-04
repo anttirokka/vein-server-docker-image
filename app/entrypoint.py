@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import os
 import sys
+import time
 import subprocess
 import configparser
 import requests
@@ -319,12 +320,28 @@ def install_or_update_server(server_path):
     cmd = [
         '/home/steam/steamcmd/steamcmd.sh',
         '+force_install_dir', server_path,
-        '+login', steam_user, steam_pass, steam_auth,
-        '+app_update', appid, 'validate',
-        '+quit'
+        '+login', steam_user
     ]
 
-    subprocess.run(cmd, check=True)
+    if steam_pass:
+        cmd.append(steam_pass)
+    
+    if steam_auth:
+        cmd.append(steam_auth)
+
+    cmd.extend(['+app_update', appid, 'validate', '+quit'])
+
+    max_retries = 3
+    for i in range(max_retries):
+        try:
+            subprocess.run(cmd, check=True)
+            break
+        except subprocess.CalledProcessError as e:
+            if i < max_retries - 1:
+                print(f"SteamCMD failed with exit code {e.returncode}. Retrying ({i+1}/{max_retries})...")
+                time.sleep(5)
+            else:
+                raise
 
 def setup_steamclient_symlink(server_path):
     """Create steamclient.so symlink if needed."""
