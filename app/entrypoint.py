@@ -2,6 +2,7 @@
 import os
 import sys
 import time
+import shutil
 import subprocess
 import configparser
 import requests
@@ -343,6 +344,17 @@ def install_or_update_server(server_path):
         except subprocess.CalledProcessError as e:
             if i < max_retries - 1:
                 print(f"SteamCMD failed with exit code {e.returncode}. Retrying ({i+1}/{max_retries}) in 10 seconds...")
+
+                # If we've failed multiple times, try cleaning up steamapps to force a fresh state
+                if i == 2:  # After 3rd failure
+                    steamapps_path = os.path.join(server_path, 'steamapps')
+                    if os.path.exists(steamapps_path):
+                        print(f"Multiple failures detected. Removing {steamapps_path} to force fresh update...")
+                        try:
+                            shutil.rmtree(steamapps_path)
+                        except Exception as ex:
+                            print(f"Failed to remove steamapps: {ex}")
+
                 time.sleep(10)
             else:
                 print("SteamCMD failed after multiple attempts.")
