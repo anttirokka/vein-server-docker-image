@@ -315,6 +315,10 @@ def install_or_update_server(server_path):
     steam_pass = os.getenv('STEAM_PASS', '')
     steam_auth = os.getenv('STEAM_AUTH', '')
 
+    # Try to update SteamCMD itself first
+    print("Checking for SteamCMD updates...")
+    subprocess.run(['/home/steam/steamcmd/steamcmd.sh', '+login', 'anonymous', '+quit'], check=False)
+
     print(f"Updating/Installing Vein Dedicated Server (AppID: {appid})...")
 
     cmd = [
@@ -325,22 +329,23 @@ def install_or_update_server(server_path):
 
     if steam_pass:
         cmd.append(steam_pass)
-    
+
     if steam_auth:
         cmd.append(steam_auth)
 
     cmd.extend(['+app_update', appid, 'validate', '+quit'])
 
-    max_retries = 3
+    max_retries = 10
     for i in range(max_retries):
         try:
             subprocess.run(cmd, check=True)
             break
         except subprocess.CalledProcessError as e:
             if i < max_retries - 1:
-                print(f"SteamCMD failed with exit code {e.returncode}. Retrying ({i+1}/{max_retries})...")
-                time.sleep(5)
+                print(f"SteamCMD failed with exit code {e.returncode}. Retrying ({i+1}/{max_retries}) in 10 seconds...")
+                time.sleep(10)
             else:
+                print("SteamCMD failed after multiple attempts.")
                 raise
 
 def setup_steamclient_symlink(server_path):
