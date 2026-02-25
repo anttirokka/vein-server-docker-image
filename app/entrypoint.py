@@ -311,7 +311,11 @@ def setup_directories(server_path, config_path):
 
 def install_or_update_server(server_path):
     """Run SteamCMD to install/update the server."""
-    appid = os.getenv('APPID')
+    experimental = os.getenv('EXPERIMENTAL_BUILD', 'False').strip().lower() == 'true'
+    if experimental:
+        appid = os.getenv('EXPERIMENTAL_APPID', '2600250')
+    else:
+        appid = os.getenv('APPID', '2131400')
     steam_user = os.getenv('STEAM_USER', 'anonymous')
     steam_pass = os.getenv('STEAM_PASS', '')
     steam_auth = os.getenv('STEAM_AUTH', '')
@@ -320,7 +324,10 @@ def install_or_update_server(server_path):
     print("Checking for SteamCMD updates...")
     subprocess.run(['/home/steam/steamcmd/steamcmd.sh', '+login', 'anonymous', '+quit'], check=False)
 
-    print(f"Updating/Installing Vein Dedicated Server (AppID: {appid})...")
+    if experimental:
+        print(f"Updating/Installing Vein Dedicated Server - EXPERIMENTAL branch (AppID: {appid})...")
+    else:
+        print(f"Updating/Installing Vein Dedicated Server (AppID: {appid})...")
 
     cmd = [
         '/home/steam/steamcmd/steamcmd.sh',
@@ -334,7 +341,10 @@ def install_or_update_server(server_path):
     if steam_auth:
         cmd.append(steam_auth)
 
-    cmd.extend(['+app_update', appid, 'validate', '+quit'])
+    if experimental:
+        cmd.extend(['+app_update', appid, '-beta', 'experimental', 'validate', '+quit'])
+    else:
+        cmd.extend(['+app_update', appid, 'validate', '+quit'])
 
     max_retries = 10
     for i in range(max_retries):

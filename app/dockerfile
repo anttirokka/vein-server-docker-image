@@ -28,6 +28,10 @@ ENV STEAM_USER=anonymous
 ENV STEAM_PASS=""
 ENV STEAM_AUTH=""
 ENV APPID=2131400
+ENV EXPERIMENTAL_APPID=2600250
+
+# Set to "True" to install the experimental/beta branch instead of stable
+ENV EXPERIMENTAL_BUILD=False
 ENV SERVER_PATH=/home/steam/vein-server
 ENV CONFIG_DIR_NAME=LinuxServer
 ENV CONFIG_PATH=${SERVER_PATH}/Vein/Saved/Config/${CONFIG_DIR_NAME}
