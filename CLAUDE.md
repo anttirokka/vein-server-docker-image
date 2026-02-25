@@ -17,7 +17,7 @@ Docker image for running a Vein dedicated server. Built on `cm2network/steamcmd:
 - All server configuration is driven by environment variables, documented in `Readme.md`.
 - `entrypoint.py` reads env vars, writes `Game.ini` / `Engine.ini`, runs steamcmd, then execs the server binary.
 - `CVAR_` prefixed env vars are written to `Engine.ini` under `[ConsoleVariables]`.
-- Steam App IDs: stable = `2131400`, experimental = `2600250`.
+- Steam App ID: `2131400` for both stable and experimental (experimental just adds `-beta experimental` to steamcmd).
 - Experimental branch: set `EXPERIMENTAL_BUILD=True`; steamcmd gets `-beta experimental` and uses `EXPERIMENTAL_APPID`.
 - The Dockerfile `ENTRYPOINT` is a bash one-liner that: fixes volume ownership → sets up backup cron → starts cron → starts http-forwarder → execs `entrypoint.py`.
 
