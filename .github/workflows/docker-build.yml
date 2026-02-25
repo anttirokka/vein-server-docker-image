@@ -6,7 +6,6 @@ on:
       - main
     paths:
       - 'app/**'
-      - 'app/dockerfile'
       - '.github/workflows/docker-build.yml'
   pull_request:
     branches:
