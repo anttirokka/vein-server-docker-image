@@ -32,6 +32,8 @@ ENV EXPERIMENTAL_APPID=2600250
 
 # Set to "True" to install the experimental/beta branch instead of stable
 ENV EXPERIMENTAL_BUILD=False
+# Set to "True" to skip file verification on install/update (faster restarts, but may miss corrupted files)
+ENV SKIP_VALIDATION=False
 ENV SERVER_PATH=/home/steam/vein-server
 ENV CONFIG_DIR_NAME=LinuxServer
 ENV CONFIG_PATH=${SERVER_PATH}/Vein/Saved/Config/${CONFIG_DIR_NAME}

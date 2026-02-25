@@ -312,6 +312,7 @@ def setup_directories(server_path, config_path):
 def install_or_update_server(server_path):
     """Run SteamCMD to install/update the server."""
     experimental = os.getenv('EXPERIMENTAL_BUILD', 'False').strip().lower() == 'true'
+    skip_validation = os.getenv('SKIP_VALIDATION', 'False').strip().lower() == 'true'
     if experimental:
         appid = os.getenv('EXPERIMENTAL_APPID', '2600250')
     else:
@@ -341,10 +342,13 @@ def install_or_update_server(server_path):
     if steam_auth:
         cmd.append(steam_auth)
 
+    update_cmd = ['+app_update', appid]
     if experimental:
-        cmd.extend(['+app_update', appid, '-beta', 'experimental', 'validate', '+quit'])
-    else:
-        cmd.extend(['+app_update', appid, 'validate', '+quit'])
+        update_cmd.extend(['-beta', 'experimental'])
+    if not skip_validation:
+        update_cmd.append('validate')
+    update_cmd.append('+quit')
+    cmd.extend(update_cmd)
 
     max_retries = 10
     for i in range(max_retries):
