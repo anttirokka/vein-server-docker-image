@@ -2,12 +2,15 @@
 import os
 import sys
 import time
+import signal
 import shutil
 import subprocess
 import configparser
 import requests
 from pathlib import Path
 from datetime import datetime
+
+server_process = None
 
 def run_as_steam_user():
     """Re-execute script as steam user if running as root."""
@@ -235,9 +238,6 @@ def update_game_ini(config_path):
     update_ini_value(config, 'OnlineSubsystemSteam', 'bVACEnabled',
                      os.getenv('VAC_ENABLED', '0'))
 
-    # [URL]
-    update_ini_value(config, 'URL', 'Port', os.getenv('GAME_PORT', '7777'))
-
     # [/Script/Vein.ServerSettings]
     show_badges = os.getenv('GS_SHOW_SCOREBOARD_BADGES')
     if show_badges:
@@ -394,8 +394,21 @@ def setup_steamclient_symlink(server_path):
     else:
         print(f"Warning: {steamclient_so} not found in common SteamCMD paths or server directory. SteamAPI might fail.")
 
+def run_backup(reason="scheduled"):
+    """Run the backup script synchronously. Used for the pre-stop backup hook."""
+    print(f"Running backup ({reason})...")
+    result = subprocess.run(['python3', '/backup.py'], check=False)
+    if result.returncode != 0:
+        print(f"Backup ({reason}) exited with code {result.returncode}")
+    return result.returncode
+
 def start_server(server_path, extra_args):
-    """Start the Vein server."""
+    """Start the Vein server as a child process (not exec'd), so we can catch
+    SIGTERM/SIGINT, let the server shut down, and take a backup before the
+    container actually stops.
+    """
+    global server_process
+
     game_port = os.getenv('GAME_PORT', '7777')
     query_port = os.getenv('GAME_SERVER_QUERY_PORT', '27015')
 
@@ -417,11 +430,9 @@ def start_server(server_path, extra_args):
     # Send Discord notification about server starting
     server_name = os.getenv('SERVER_NAME', 'Vein Server')
     max_players = os.getenv('MAX_PLAYERS', '16')
-    game_port = os.getenv('GAME_PORT', '7777')
-    query_port = os.getenv('GAME_SERVER_QUERY_PORT', '27015')
 
     send_discord_notification(
-        f"🚀 **{server_name}** is starting up!\n\n"
+        f"\U0001F680 **{server_name}** is starting up!\n\n"
         f"**Max Players:** {max_players}\n"
         f"**Timestamp:** {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC",
         title="Server Starting",
@@ -432,13 +443,45 @@ def start_server(server_path, extra_args):
 
     # Find server executable
     if os.path.isfile('./VeinServer.sh'):
-        os.execv('./VeinServer.sh', ['./VeinServer.sh'] + server_args)
+        exe = ['./VeinServer.sh']
     elif os.path.isfile('./VeinServer'):
-        os.execv('./VeinServer', ['./VeinServer'] + server_args)
+        exe = ['./VeinServer']
     else:
         print(f"Error: VeinServer.sh or VeinServer executable not found in {server_path}.")
         print("Please check the installation.")
         sys.exit(1)
+
+    cmd = exe + server_args
+    shutdown_grace = int(os.getenv('SHUTDOWN_GRACE_SECONDS', '30'))
+    backup_on_stop = os.getenv('BACKUP_ON_STOP', 'true').strip().lower() == 'true'
+    backup_enabled = os.getenv('BACKUP_ENABLED', 'true').strip().lower() == 'true'
+
+    server_process = subprocess.Popen(cmd)
+
+    def handle_shutdown(signum, frame):
+        print(f"Received signal {signum}, stopping server (grace period {shutdown_grace}s)...")
+        if server_process and server_process.poll() is None:
+            server_process.send_signal(signum)
+            try:
+                server_process.wait(timeout=shutdown_grace)
+            except subprocess.TimeoutExpired:
+                print("Server did not exit within the grace period, killing it...")
+                server_process.kill()
+                server_process.wait()
+
+        if backup_on_stop and backup_enabled:
+            run_backup(reason="pre-stop")
+        elif backup_on_stop and not backup_enabled:
+            print("BACKUP_ON_STOP is true but BACKUP_ENABLED is false, skipping pre-stop backup.")
+
+        sys.exit(0)
+
+    signal.signal(signal.SIGTERM, handle_shutdown)
+    signal.signal(signal.SIGINT, handle_shutdown)
+
+    exit_code = server_process.wait()
+    print(f"Vein server exited with code {exit_code}.")
+    sys.exit(exit_code)
 
 def main():
     """Main entrypoint function."""

@@ -62,7 +62,7 @@ services:
 |----------|---------|-------------|
 | `GAME_PORT` | 7777 | UDP port for game traffic |
 | `GAME_SERVER_QUERY_PORT` | 27015 | UDP port for Steam queries |
-| `HTTP_PORT` | "" | TCP port for HTTP API (empty = disabled) |
+| `HTTP_PORT` | "" | TCP port for the game's built-in HTTP API (empty = disabled) |
 | `SERVER_MULTIHOME_IP` | "" | Specific IP to bind to |
 
 ### Admin Settings
@@ -86,11 +86,22 @@ ADMIN_STEAM_IDS="76561198111111111,76561198222222222"
 | `HEARTBEAT_INTERVAL` | 5.0 | Server heartbeat interval in seconds |
 | `GS_SHOW_SCOREBOARD_BADGES` | "" | Show scoreboard badges (0=disabled, 1=enabled) |
 
+### Backup Settings
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `BACKUP_ENABLED` | true | Enable backups (scheduled and pre-stop) |
+| `BACKUP_SCHEDULE` | "0 3 * * *" | Cron schedule for automatic backups |
+| `BACKUP_RETENTION` | 14 | Number of backups to keep |
+| `BACKUP_DIR` | `$SERVER_PATH/Vein/Saved/Backups` | Where backups are written |
+| `BACKUP_ON_STOP` | true | Also take a backup right before the server shuts down (SIGTERM/SIGINT), in addition to the cron schedule |
+| `SHUTDOWN_GRACE_SECONDS` | 30 | How long to let the server exit on its own before it's killed and the pre-stop backup runs anyway |
+
 ### Discord Integration
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `DISCORD_WEBHOOK_URL` | "" | Discord webhook for chat messages |
+| `DISCORD_WEBHOOK_URL` | "" | Discord webhook for chat messages and container start/backup notifications |
 | `DISCORD_ADMIN_WEBHOOK_URL` | "" | Discord webhook for admin notifications |
 
 ### Console Variables (CVARs)
@@ -103,62 +114,30 @@ CVAR_vein.TimeMultiplier=16
 CVAR_vein.DifficultyMultiplier=1.5
 ```
 
-### Steam Authentication
+## HTTP API
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `STEAM_USER` | anonymous | Steam username (use anonymous for public servers) |
-| `STEAM_PASS` | "" | Steam password |
-| `STEAM_AUTH` | "" | Steam Guard authentication code |
-
-## HTTP API Configuration
-
-Enable the HTTP API to query server data:
+Only works in Vein 0.021+.
 
 ```bash
 docker run -d \
   --name vein-server \
   -p 7777:7777/udp \
   -p 27015:27015/udp \
-  -p 8855:9080/tcp \
+  -p 8080:8080/tcp \
   -e HTTP_PORT=8080 \
   -e SERVER_NAME="My Vein Server" \
-  ghcr.io/anttirokka/vein-dedicated-server:latest
+  ghcr.io/anttirokka/vein-server-docker-image:latest
 ```
 
-**⚠️ Security Warning:** The HTTP API has no built-in authentication. If you expose this port publicly, consider using a reverse proxy with authentication or an intermediate server to handle requests securely.
+Setting `HTTP_PORT` enables the game's built-in HTTP API on that port and maps it straight through — there's no separate proxy/forwarder in this image, so map the host port directly to the same container port you set `HTTP_PORT` to (e.g. `-p 8855:8080` with `HTTP_PORT=8080`).
 
-**🔧 Technical Note:** The Vein game server binds the HTTP API to `localhost:8080` only. This Docker image includes an automatic port forwarder using `socat` that redirects traffic from `0.0.0.0:9080` to `localhost:8080`, allowing external access. Therefore:
-- Set `HTTP_PORT=8080` (the game's internal port)
-- Map container port `9080` to your desired host port (e.g., `8855:9080`)
-- Access the API at `http://your-server-ip:8855`
+**⚠️ Security Warning:** The HTTP API has no built-in authentication and no CORS headers of its own. If you expose this port publicly or call it from browser JavaScript on another origin, put a reverse proxy (e.g. nginx) in front of it to handle authentication and CORS — don't expose it directly to the internet.
 
-### Docker Compose Example with HTTP API
+### Routes
 
-```yaml
-version: '3.8'
+You may notice some of the responses are formatted quite strangely compared to what you might see in web APIs. This is because Unreal makes some arbitrary changes to how keys and values get rendered to JSON.
 
-services:
-  vein-server:
-    image: ghcr.io/anttirokka/vein-dedicated-server:latest
-    container_name: vein-server
-    ports:
-      - "7777:7777/udp"  # Game port
-      - "27015:27015/udp"  # Query port
-      - "8855:9080/tcp"  # HTTP API (host:8855 -> container:9080 -> game:8080)
-    environment:
-      - SERVER_NAME=My Vein Server
-      - MAX_PLAYERS=16
-      - SERVER_PUBLIC=True
-      - HTTP_PORT=8080  # Game's internal HTTP port
-      - GAME_PORT=7777
-      - GAME_SERVER_QUERY_PORT=27015
-    volumes:
-      - ./vein-data:/home/steam/vein-server
-    restart: unless-stopped
-```
-
-Once enabled, you can query the server at `http://your-server-ip:8855` for JSON-formatted data.
+`GET /status`, `GET /characters/:id`, `GET /players/:id`, `GET /players`, `GET /time`, `GET /weather` — see the [official HTTP API docs](https://ramjet.notion.site/dedicated-servers) for response shapes.
 
 ## Volume Mounts
 
@@ -172,7 +151,8 @@ This will preserve:
 - Server installation files
 - Configuration files
 - Save game data
-- Logs
+- Logs (unless `LOG_DIR` points elsewhere)
+- Backups (unless `BACKUP_DIR` points elsewhere)
 
 ## Ports
 
@@ -180,9 +160,7 @@ This will preserve:
 |------|----------|-------------|
 | 7777 | UDP | Game traffic (configurable via `GAME_PORT`) |
 | 27015 | UDP | Steam query port (configurable via `GAME_SERVER_QUERY_PORT`) |
-| 9080 | TCP | HTTP API forwarder (maps to game's internal `localhost:8080`) |
-
-**Note:** When using the HTTP API, always map to container port `9080`, not `8080`. The game binds to `localhost:8080` internally, and the forwarder makes it available on `9080`.
+| 8080 | TCP | HTTP API — only listens if `HTTP_PORT` is set. Map this port directly, no forwarder involved. |
 
 ### Available Tags
 
@@ -277,16 +255,15 @@ Server logs are stored in:
 
 ### HTTP API not working
 
-- Verify `HTTP_PORT=8080` is set in environment variables
-- Ensure you're mapping to container port `9080` (e.g., `8855:9080`), not `8080`
+- Verify `HTTP_PORT` is set (e.g. `HTTP_PORT=8080`) — the API is disabled unless it's set
+- Make sure the host port is mapped to the *same* container port as `HTTP_PORT` (e.g. `-p 8855:8080` with `HTTP_PORT=8080`)
 - Check that the port is not blocked by firewall
 - The HTTP API requires the game to be fully started (may take 1-2 minutes after container start)
-- Check logs: `docker logs vein-server` - look for "Starting HTTP traffic forwarder"
+- Check logs: `docker logs vein-server` - look for errors around `Updating .../Game.ini` and server startup
 
 ### HTTP API returns "Connection refused"
 
 - The game server may not have started yet - wait 1-2 minutes after container start
-- Check if the forwarder detected the game's HTTP listener: `docker logs vein-server | grep "HTTP listener detected"`
 - Verify the game server didn't crash: `docker logs vein-server | grep -i error`
 
 ## License

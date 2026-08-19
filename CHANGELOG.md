@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.0] - 2026-08-19
+
+### Changes
+- Add pre-stop backup: server now runs as a child process (not exec'd) so SIGTERM/SIGINT is caught, the server is given SHUTDOWN_GRACE_SECONDS to exit cleanly, then a backup runs before the container exits (BACKUP_ON_STOP, default true). Previously only the cron-scheduled backup existed.
+- Remove the HTTP forwarder/CORS proxy (http-forwarder.py, port 9080). It solved two problems this deployment does not have: CORS is already handled by vein-server-info's own nginx proxy (server-to-server calls are never subject to CORS), and the claimed localhost-only HTTP API bind is contradicted by the current production setup, which maps the game's HTTP port straight through with no forwarder. HTTP_PORT now maps directly, one fewer moving part on startup.
+
+
 ## [1.2.0] - 2025-12-09
 
 ### Changes
