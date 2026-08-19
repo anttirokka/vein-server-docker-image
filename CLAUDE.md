@@ -7,6 +7,7 @@ Docker image for running a Vein dedicated server. Built on `cm2network/steamcmd:
 **Source files live in `app/`:**
 - `dockerfile` — main Dockerfile
 - `entrypoint.py` — server install, config generation, launch, and shutdown/backup logic
+- `http-forwarder.py` — forwards `0.0.0.0:9080` → `localhost:8080` (game HTTP API). Required, not optional: the game binds its HTTP API to `127.0.0.1` only, so Docker's port publish cannot reach it without this relay. Don't remove it without an alternative that solves the same loopback-bind problem.
 - `backup.py` — save backup logic
 - `backup-cron.sh` — cron wrapper for backups
 - `requirements.txt` — Python deps (requests, etc.)
@@ -20,7 +21,7 @@ Docker image for running a Vein dedicated server. Built on `cm2network/steamcmd:
 - Experimental branch: set `EXPERIMENTAL_BUILD=True`; steamcmd gets `-beta experimental` and uses `EXPERIMENTAL_APPID`.
 - The Dockerfile `ENTRYPOINT` is a bash one-liner that: fixes volume ownership → sets up backup cron → starts cron → execs `entrypoint.py`.
 - `entrypoint.py`'s `start_server()` keeps the server as a child process and installs SIGTERM/SIGINT handlers so it can forward the signal, wait for the server to exit (or kill it after `SHUTDOWN_GRACE_SECONDS`), then run a pre-stop backup (`BACKUP_ON_STOP`) before the container actually exits. Don't switch this back to `os.execv()` for the server launch — that would remove the ability to hook shutdown.
-- There is **no HTTP forwarder/CORS proxy** in this image (removed — see CHANGELOG). The game's HTTP API (`HTTP_PORT`) is mapped straight through. If a deployment needs CORS or auth in front of it, that belongs in a reverse proxy on the consumer side (e.g. `vein-server-info`'s nginx), not in this image.
+- The HTTP forwarder's CORS headers are redundant when the consumer (e.g. `vein-server-info`) already proxies server-side through its own nginx — but the relay itself (0.0.0.0:9080 -> 127.0.0.1:8080) is not optional, see above.
 
 ## Ports
 
@@ -28,7 +29,7 @@ Docker image for running a Vein dedicated server. Built on `cm2network/steamcmd:
 |------|----------|---------|
 | 7777 | UDP | Game traffic (`GAME_PORT`) |
 | 27015 | UDP | Steam query (`GAME_SERVER_QUERY_PORT`) |
-| 8080 | TCP | HTTP API — only listens if `HTTP_PORT` is set; map directly |
+| 9080 | TCP | HTTP API forwarder — only listens if `HTTP_PORT` is set; map this, not 8080 |
 
 ## Adding New Environment Variables
 

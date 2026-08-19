@@ -52,8 +52,9 @@ ENV ADMIN_STEAM_IDS=""
 ENV HEARTBEAT_INTERVAL=5.0
 ENV SERVER_PASSWORD=""
 # HTTP API port. Set to enable the game's built-in HTTP API (0.021+).
-# The game listens on this port directly - map it straight through in your
-# port publish (e.g. -p 8855:8080), no forwarder/proxy needed.
+# The game binds this to 127.0.0.1 only inside the container, so it is NOT
+# reachable via a direct port publish - use the forwarder on port 9080
+# instead (e.g. -p 8855:9080 with HTTP_PORT=8080).
 ENV HTTP_PORT=""
 
 # Game.ini - [OnlineSubsystemSteam]
@@ -84,8 +85,8 @@ ENV DISCORD_ADMIN_WEBHOOK_URL=""
 # These are defaults; actual ports used depend on GAME_PORT and GAME_SERVER_QUERY_PORT ENV vars
 EXPOSE 7777/udp
 EXPOSE 27015/udp
-# HTTP API (TCP) - only listens if HTTP_PORT is set; map straight through, no forwarder
-EXPOSE 8080/tcp
+# HTTP API forwarder (TCP) - relays to the game's loopback-only HTTP API; map this port, not 8080
+EXPOSE 9080/tcp
 
 # Install gosu for safe privilege dropping at runtime
 # (replaced complex download+verify with simple apt install)
@@ -113,9 +114,10 @@ RUN mkdir -p ${SERVER_PATH} ${CONFIG_PATH} ${LOG_DIR} && \
 
 # Copy entrypoint script and make it executable (as root)
 COPY --chown=steam:steam entrypoint.py /entrypoint.py
+COPY --chown=steam:steam http-forwarder.py /http-forwarder.py
 COPY --chown=steam:steam backup.py /backup.py
 COPY --chown=root:root backup-cron.sh /backup-cron.sh
-RUN chmod +x /entrypoint.py && chmod +x /backup.py && chmod +x /backup-cron.sh
+RUN chmod +x /entrypoint.py && chmod +x /http-forwarder.py && chmod +x /backup.py && chmod +x /backup-cron.sh
 
 # Backup configuration environment variables
 ENV BACKUP_ENABLED=true
@@ -139,14 +141,14 @@ WORKDIR ${SERVER_PATH}
 # - timeout: 10 seconds for response
 # - retries: 3 consecutive failures before marking unhealthy and restarting container
 HEALTHCHECK --start-period=600s --interval=30s --timeout=10s --retries=3 \
-    CMD curl -f http://localhost:${HTTP_PORT:-8080}/status || exit 1
+    CMD curl -f http://localhost:9080/status || exit 1
 
 # Default command passed to entrypoint.sh (can be overridden)
 CMD []
 
 # Set the entrypoint
 # Fixes ownership on mounted volumes, exports runtime env vars to /etc/environment so cron jobs
-# can access them, sets up backup cron schedule, starts cron, then runs main entrypoint.
-# The main entrypoint runs the server as a child process (not exec'd) so it can catch
-# SIGTERM/SIGINT, let the server shut down, and take a backup before the container exits.
-ENTRYPOINT ["bash", "-lc", "chown -R steam:steam ${SERVER_PATH} 2>/dev/null || true; printenv | grep -v '^_=' >> /etc/environment; if [ \"${BACKUP_ENABLED}\" = \"true\" ]; then echo \"${BACKUP_SCHEDULE} root /backup-cron.sh >> /var/log/vein-backup.log 2>&1\" > /etc/cron.d/vein-backup && chmod 0644 /etc/cron.d/vein-backup && echo \"Backup scheduled: ${BACKUP_SCHEDULE}\"; fi; cron && exec python3 /entrypoint.py"]
+# can access them, sets up backup cron schedule, starts cron and the HTTP forwarder, then runs
+# main entrypoint. The main entrypoint runs the server as a child process (not exec'd) so it can
+# catch SIGTERM/SIGINT, let the server shut down, and take a backup before the container exits.
+ENTRYPOINT ["bash", "-lc", "chown -R steam:steam ${SERVER_PATH} 2>/dev/null || true; printenv | grep -v '^_=' >> /etc/environment; if [ \"${BACKUP_ENABLED}\" = \"true\" ]; then echo \"${BACKUP_SCHEDULE} root /backup-cron.sh >> /var/log/vein-backup.log 2>&1\" > /etc/cron.d/vein-backup && chmod 0644 /etc/cron.d/vein-backup && echo \"Backup scheduled: ${BACKUP_SCHEDULE}\"; fi; cron && python3 /http-forwarder.py & exec python3 /entrypoint.py"]

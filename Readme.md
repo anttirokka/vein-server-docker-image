@@ -44,6 +44,8 @@ services:
     restart: unless-stopped
 ```
 
+**Note:** the `8080` port above only matters inside the container. To actually reach the HTTP API from outside, map the forwarder's port instead - see [HTTP API](#http-api).
+
 ## Environment Variables
 
 ### Basic Server Settings
@@ -123,15 +125,15 @@ docker run -d \
   --name vein-server \
   -p 7777:7777/udp \
   -p 27015:27015/udp \
-  -p 8080:8080/tcp \
+  -p 8855:9080/tcp \
   -e HTTP_PORT=8080 \
   -e SERVER_NAME="My Vein Server" \
   ghcr.io/anttirokka/vein-server-docker-image:latest
 ```
 
-Setting `HTTP_PORT` enables the game's built-in HTTP API on that port and maps it straight through — there's no separate proxy/forwarder in this image, so map the host port directly to the same container port you set `HTTP_PORT` to (e.g. `-p 8855:8080` with `HTTP_PORT=8080`).
+**🔧 Technical note:** the Vein game server binds its HTTP API to `127.0.0.1` only, inside the container's network namespace. Docker's port publishing cannot deliver external traffic to a loopback-only listener no matter how you map it, so this image runs a small forwarder that relays `0.0.0.0:9080` → `127.0.0.1:8080`. Set `HTTP_PORT` to the game's internal port (usually `8080`) and map your host port to **`9080`**, not `8080` — mapping straight to `8080` will not work.
 
-**⚠️ Security Warning:** The HTTP API has no built-in authentication and no CORS headers of its own. If you expose this port publicly or call it from browser JavaScript on another origin, put a reverse proxy (e.g. nginx) in front of it to handle authentication and CORS — don't expose it directly to the internet.
+**⚠️ Security Warning:** The HTTP API has no built-in authentication. The forwarder adds permissive CORS headers (`Access-Control-Allow-Origin: *`) but nothing else — if you expose this port publicly, put a real reverse proxy in front of it for authentication.
 
 ### Routes
 
@@ -160,7 +162,7 @@ This will preserve:
 |------|----------|-------------|
 | 7777 | UDP | Game traffic (configurable via `GAME_PORT`) |
 | 27015 | UDP | Steam query port (configurable via `GAME_SERVER_QUERY_PORT`) |
-| 8080 | TCP | HTTP API — only listens if `HTTP_PORT` is set. Map this port directly, no forwarder involved. |
+| 9080 | TCP | HTTP API forwarder — only listens if `HTTP_PORT` is set. Map **this** port (not 8080, which is loopback-only inside the container). |
 
 ### Available Tags
 
@@ -256,13 +258,14 @@ Server logs are stored in:
 ### HTTP API not working
 
 - Verify `HTTP_PORT` is set (e.g. `HTTP_PORT=8080`) — the API is disabled unless it's set
-- Make sure the host port is mapped to the *same* container port as `HTTP_PORT` (e.g. `-p 8855:8080` with `HTTP_PORT=8080`)
+- Make sure the host port is mapped to **`9080`** (the forwarder), not to `HTTP_PORT`'s value directly — the game only listens on `127.0.0.1` inside the container, so a direct mapping to `8080` will always refuse connections from outside
 - Check that the port is not blocked by firewall
 - The HTTP API requires the game to be fully started (may take 1-2 minutes after container start)
-- Check logs: `docker logs vein-server` - look for errors around `Updating .../Game.ini` and server startup
+- Check logs: `docker logs vein-server` - look for "Starting HTTP traffic forwarder" and "HTTP listener detected"
 
 ### HTTP API returns "Connection refused"
 
+- If you mapped straight to `8080` instead of `9080`, that's expected — see above
 - The game server may not have started yet - wait 1-2 minutes after container start
 - Verify the game server didn't crash: `docker logs vein-server | grep -i error`
 

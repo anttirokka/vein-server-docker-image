@@ -1,11 +1,17 @@
 # Changelog
 
+## [1.3.1] - 2026-08-19
+
+### Changes
+- Revert removal of the HTTP forwarder (http-forwarder.py). The Vein game server binds its HTTP API to 127.0.0.1 only inside the container network namespace; confirmed against the actual deployment that a direct port publish to 8080 gets connection-refused both externally and from another host on the same docker network - the forwarder relaying 0.0.0.0:9080 -> 127.0.0.1:8080 is required, not optional. The CORS half of the forwarder is still redundant when the consumer already proxies server-side (its own nginx, for example), but the relay itself is load-bearing. Map port 9080, not 8080.
+
 ## [1.3.0] - 2026-08-19
 
 ### Changes
 - Add pre-stop backup: server now runs as a child process (not exec'd) so SIGTERM/SIGINT is caught, the server is given SHUTDOWN_GRACE_SECONDS to exit cleanly, then a backup runs before the container exits (BACKUP_ON_STOP, default true). Previously only the cron-scheduled backup existed.
 - Remove the HTTP forwarder/CORS proxy (http-forwarder.py, port 9080). It solved two problems this deployment does not have: CORS is already handled by vein-server-info's own nginx proxy (server-to-server calls are never subject to CORS), and the claimed localhost-only HTTP API bind is contradicted by the current production setup, which maps the game's HTTP port straight through with no forwarder. HTTP_PORT now maps directly, one fewer moving part on startup.
 
+  **Correction (see 1.3.1 above): this was wrong. The localhost-only bind claim was confirmed accurate, and the forwarder was restored.**
 
 ## [1.2.0] - 2025-12-09
 
@@ -60,4 +66,3 @@
 
 ### Added
 - Initial release of Vein Dedicated Server Docker image
-
